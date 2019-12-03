@@ -1,0 +1,10 @@
+setuptools==39.1.0
+PyOpenGL==3.1.0
+PyOpenGL-accelerate==3.1.0
+glumpy==1.1.0
+pillow
+numpy==1.14.6
+scipy==1.0.1
+logging
+opencv-python==3.4.2.17
+opencv-contrib-python==3.4.2.17

@@ -1,0 +1,8 @@
+torch==0.4.1
+torchvision==0.2.2
+pillow
+numpy==1.14.6
+scipy==1.0.1
+pyyaml
+logging
+matplotlib==2.1.0
