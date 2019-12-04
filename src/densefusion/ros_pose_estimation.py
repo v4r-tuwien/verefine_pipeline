@@ -19,7 +19,7 @@ import numpy as np
 import rospy
 from geometry_msgs.msg import Pose, Point, Quaternion
 from object_detector_msgs.msg import BoundingBox, Detection, PoseWithConfidence
-from object_detector_msgs.srv import estimate_poses
+from object_detector_msgs.srv import estimate_poses, estimate_posesResponse
 import ros_numpy
 
 from src.util.dataset import YcbvDataset
@@ -35,6 +35,8 @@ if __name__ == "__main__":
                            0.0, 0.0, 1.0]).reshape(3, 3)
 
     def estimate(req):
+        print("pose estimate requested...")
+
         # === IN ===
         # --- rgb
         rgb = req.rgb
@@ -45,8 +47,10 @@ if __name__ == "__main__":
         depth = req.depth
         depth = ros_numpy.numpify(depth)
 
+        print(np.max(depth))
+
         # --- detection
-        name = req.detection.name
+        name = req.det.name
         obj_id = -1
         for idx, obj_name in dataset.obj_names.items():
             if obj_name == name:
@@ -54,11 +58,15 @@ if __name__ == "__main__":
                 break
         assert obj_id > 0  # should start from 1
 
-        bbox = req.detection.bbox
+        bbox = req.det.bbox
         obj_roi = [bbox.ymin, bbox.xmin, bbox.ymax, bbox.xmax]
 
-        mask_ids = req.detection.mask
+        mask_ids = req.det.mask
+        print(len(mask_ids))
+        mask_ids = np.array(mask_ids)
+        print(mask_ids.shape)
         obj_mask = np.zeros((height * width), dtype=np.uint8)
+        print(obj_mask.shape)
         obj_mask[mask_ids] = 1
         obj_mask = obj_mask.reshape((height, width))
 
@@ -78,16 +86,18 @@ if __name__ == "__main__":
 
             # --- pose
             pose.pose = Pose()
-            pose.pose.point = ros_numpy.msgify(Point, t, hom=False)
+            pose.pose.position = ros_numpy.msgify(Point, t)
             r = np.concatenate((r[1:],[r[0]]))  # ros_numpy expects x, y, z, w
-            pose.pose.quaternion = ros_numpy.msgify(Quaternion, r)
+            pose.pose.orientation = ros_numpy.msgify(Quaternion, r)
 
             # --- confidence
             pose.confidence = c
 
             poses.append(pose)
 
-        return poses
+        response = estimate_posesResponse()
+        response.poses = poses
+        return response
 
     rospy.init_node("poseestimation_densefusion")
     s = rospy.Service("estimate_pose", estimate_poses, estimate)

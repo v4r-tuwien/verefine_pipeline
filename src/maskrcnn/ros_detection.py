@@ -15,7 +15,8 @@ out:
 import numpy as np
 
 import rospy
-from object_detector_msgs.msg import BoundingBox, Detection
+from std_msgs.msg import Header
+from object_detector_msgs.msg import BoundingBox, Detection, Detections
 from object_detector_msgs.srv import detectron2_service_server
 import ros_numpy
 
@@ -29,9 +30,11 @@ if __name__ == "__main__":
     maskrcnn = MaskRcnnDetector()
 
     def detect(req):
+        print("request detection...")
+
         # === IN ===
         # --- rgb
-        rgb = req.rgb
+        rgb = req.image
         width, height = rgb.width, rgb.height
         assert width == 640 and height == 480
         rgb = ros_numpy.numpify(rgb)
@@ -41,7 +44,7 @@ if __name__ == "__main__":
 
         # === OUT ===
         detections = []
-        for obj_id, roi, mask, score in zip(obj_ids, rois, masks, scores):
+        for i, (obj_id, roi, score) in enumerate(zip(obj_ids, rois, scores)):
 
             detection = Detection()
 
@@ -56,23 +59,30 @@ if __name__ == "__main__":
 
             # ---
             bbox = BoundingBox()
-            bbox.ymin, bbox.xmin, bbox.ymax, bbox.xmax = roi  # TODO check
+            bbox.ymin, bbox.xmin, bbox.ymax, bbox.xmax = [int(val) for val in roi]  # TODO check
             detection.bbox = bbox
 
             # ---
+            mask = masks[:, :, i]
+            print(mask.shape)
             mask_ids = np.argwhere(mask.reshape((height * width)) > 0)
-            detection.mask = mask_ids
+            print(mask_ids.shape)
+            detection.mask = list(mask_ids.flat)
 
             # ---
             detection.score = score
 
-            detection.append(detection)
+            detections.append(detection)
 
-        return detections
+        ros_detections = Detections()
+        ros_detections.width, ros_detections.height = 640, 480
+        ros_detections.detections = detections
+
+        return ros_detections
 
 
     rospy.init_node("detection_maskrcnn")
-    s = rospy.Service("detectron2_service_server", detectron2_service_server, detect)
+    s = rospy.Service("detect_objects", detectron2_service_server, detect)
     print("Detection with Mask R-CNN ready.")
 
     rospy.spin()

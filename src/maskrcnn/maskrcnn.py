@@ -73,6 +73,8 @@ class MaskRcnnDetector:
             # now c_ids are the same annotation those of the names of ply/gt files
             scores = np.array(r['scores'])
             masks = r['masks'][window[0]:window[2], window[1]:window[3], :]
+
+            print(masks.shape)
             # return rois, obj_orders, obj_ids, scores, masks
 
             return obj_ids, rois, masks, scores
