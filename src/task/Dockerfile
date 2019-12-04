@@ -19,6 +19,7 @@ RUN echo "source /task/catkin_ws/devel/setup.bash" >> /root/.bashrc
 # clone and build message and service definitions
 RUN /bin/bash -c 'cd /task/catkin_ws/src; \
                   git clone https://gitlab+deploy-token-28:VxqryrgVYvjaUg4tyJdY@rgit.acin.tuwien.ac.at/msuchi/object_detector_msgs.git'
+RUN /bin/bash -c 'git clone https://gitlab+deploy-token-29:_3RcqWbSB6SHJz3xA2Bh@rgit.acin.tuwien.ac.at/leitnermrks/grasping_pipeline.git'
 RUN /bin/bash -c '. /opt/ros/kinetic/setup.bash; cd /task/catkin_ws; catkin build'
 
 # clone and build ros_numpy

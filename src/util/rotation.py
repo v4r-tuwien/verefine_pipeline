@@ -1,5 +1,7 @@
 import numpy as np
 
+# TODO replace this with scipy.spatial.transform.rotation.Rotation
+
 
 def euler_to_matrix(euler):
     """
