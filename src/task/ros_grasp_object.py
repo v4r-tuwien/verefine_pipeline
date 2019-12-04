@@ -2,13 +2,18 @@ import numpy as np
 import rospy
 import ros_numpy
 import actionlib
+import tf
+
+import cv2
 
 import message_filters
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 from sensor_msgs.msg import Image, Header
 from std_srvs.srv import Empty, EmptyResponse
 from object_detector_msgs.srv import detectron2_service_server, estimate_poses, refine_poses
-from grasping_pipeline.msg import ExecuteGraspAction, ExecuteGraspGoal
+from grasping_pipeline.action import ExecuteGraspAction, ExecuteGraspGoal
+from sasha_handover.action import HandoverAction, HandoverGoal
+
 
 # === define pipeline clients ===
 
@@ -54,6 +59,11 @@ class Grasper:
         self.depth = None
         self.working = False
 
+        self.pub_segmentation = rospy.Publisher("/hsr-grasping/segmentation", Image)
+        # self.pub_initial = rospy.Publisher("/hsr-grasping/initial_poses", Image)
+        # self.pub_refined = rospy.Publisher("/hsr-grasping/refined_poses", Image)
+        self.pub_poses = tf.TransformBroadcaster()
+
     def rgbd_callback(self, rgb, depth):
         print("callback...")
         if not self.working:
@@ -75,6 +85,7 @@ class Grasper:
         print("requesting detection...")
         detections = detect(self.rgb)
         print("   received detection.")
+        self.vis_detect(detections.detections)
 
         # for each instance...
         poses = []
@@ -89,10 +100,15 @@ class Grasper:
             print("requesting pose estimate...")
             instance_poses = estimate(self.rgb, self.depth, detection)
             print("   received pose.")
+            # for instance_pose in instance_poses:
+            #   self.vis_pose(instance_poses, "_estimated")
+
             # refine candidate poses
             print("requesting pose refinement...")
             instance_poses = refine(self.rgb, self.depth, detection, instance_poses)
             print("   received refined poses.")
+            # for instance_pose in instance_poses:
+            #   self.vis_pose(instance_poses, "_refined")
 
             # reject by pose confidence
             print(",".join(["%0.3f" % pose.confidence for pose in instance_poses]))
@@ -110,6 +126,7 @@ class Grasper:
         if len(confidences) > 0:
             best_hypothesis = np.argmax(confidences)
             best_pose = poses[best_hypothesis]
+            self.vis_pose(best_pose, "_pose")
             print("... now we would annotate pose for %s" % best_pose.name)
         else:
             best_pose = None
@@ -164,6 +181,7 @@ class Grasper:
         grasp_pose = Pose()
         grasp_pose.position = ros_numpy.msgify(Point, t)
         grasp_pose.orientation = ros_numpy.msgify(Quaternion, r)
+        self.vis_pose(grasp_pose, "_grasp")
         grasp_pose_stamped.pose = grasp_pose
 
         # === execute grasp (or stop) ===
@@ -173,27 +191,41 @@ class Grasper:
 
             # a) grasp
 
-            client = actionlib.SimpleActionClient('execute_grasp', ExecuteGraspAction)
-            client.wait_for_server()
+            client_grasp = actionlib.SimpleActionClient('execute_grasp', ExecuteGraspAction)
+            client_grasp.wait_for_server()
 
-            goal = ExecuteGraspGoal()
-            goal.grasp_pose = grasp_pose_stamped
-            goal.grasp_height = 0.03  # palm 3cm above grasp pose when grasping
-            goal.safety_distance = 0.15  # approach from 15cm above
+            goal_grasp = ExecuteGraspGoal()
+            goal_grasp.grasp_pose = grasp_pose_stamped
+            goal_grasp.grasp_height = 0.03  # palm 3cm above grasp pose when grasping
+            goal_grasp.safety_distance = 0.15  # approach from 15cm above
 
-            client.send_goal(goal)
-            client.wait_for_result(rospy.Duration.from_sec(25.0))
-            state = client.get_state()
+            client_grasp.send_goal(goal_grasp)
+            client_grasp.wait_for_result(rospy.Duration.from_sec(25.0))
+            state = client_grasp.get_state()
             if state == 3:
                 print
-                client.get_result()
+                client_grasp.get_result()
             elif state == 4:
                 print
                 'Goal aborted'
 
             # b) handover routine
 
-            # TODO handover service/action
+            client_handover = actionlib.SimpleActionClient('handover', HandoverAction)
+            client_handover.wait_for_server()
+
+            goal_handover = HandoverGoal()
+            goal_handover.force_thresh = 0.5  # default is 0.2
+
+            client_handover.send_goal(goal_handover)
+            client_handover.wait_for_result(rospy.Duration.from_sec(25.0))
+            state = client_handover.get_state()
+            if state == 3:
+                print
+                client_handover.get_result()
+            elif state == 4:
+                print
+                'Goal aborted'
 
         # 2) ... none left -> stop
         else:
@@ -202,6 +234,39 @@ class Grasper:
         self.working = False
         return EmptyResponse()
 
+    def vis_detect(self, detections):
+        width, height = self.rgb.width, self.rgb.height
+        rgb = ros_numpy.numpify(self.rgb)
+
+        vis_segmentation = rgb.copy()
+        for detection in detections:
+            name = detection.name
+
+            bbox = detection.bbox
+            obj_roi = [bbox.ymin, bbox.xmin, bbox.ymax, bbox.xmax]
+
+            mask_ids = detection.mask
+            mask_ids = np.array(mask_ids)
+            obj_mask = np.zeros((height * width), dtype=np.uint8)
+            obj_mask[mask_ids] = 1
+            obj_mask = obj_mask.reshape((height, width))
+
+            vis_segmentation[obj_mask, 0] = 255
+            vis_segmentation[obj_mask, 1] = 0
+            vis_segmentation[obj_mask, 2] = 255
+
+            cv2.rectangle(vis_segmentation, (obj_roi[1], obj_roi[0]), (obj_roi[3], obj_roi[2]), (255, 0, 255), 2)
+            cv2.putText(vis_segmentation, name, (obj_roi[1], obj_roi[0]), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                        (255, 255, 255), 2, 1)
+        vis_segmentation = np.uint8((rgb / 255 * 0.5 + vis_segmentation / 255 * 0.5) * 255)
+
+        ros_vis_segmentation = ros_numpy.msgify(vis_segmentation, Image)
+        self.pub_segmentation.publish(ros_vis_segmentation)
+
+    # TODO rendering-based visualizations for pose
+    def vis_pose(self, pose, suffix):
+        self.pub_poses.sendTransform(pose.position, pose.orientation, rospy.Time.now(), pose.name + suffix,
+                                     self.rgb.header.frame_id)
 
 if __name__ == "__main__":
     rospy.init_node("grasp_estimation_pipeline")

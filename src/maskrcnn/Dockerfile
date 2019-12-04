@@ -7,7 +7,7 @@ MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
 # essentials
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip python-catkin-tools \
+    apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip \
     python3-dev python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
