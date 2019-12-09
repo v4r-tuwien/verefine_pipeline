@@ -60,7 +60,7 @@ RUN echo "source /home/v4r/catkin_ws/devel/setup.bash" >> /home/v4r/.bashrc
 # clone ros packages, gitlab deploy tokens are needed since the repos aren't public
 RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
                   git clone https://gitlab+deploy-token-22:zKCM9FnYr86bgaABY63_@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf_recognizer_ros.git; \
-                  cd ppf_recognizer_ros; git checkout 55124e3c'
+                  cd ppf_recognizer_ros; git checkout 4013c900'
 
 RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
                   git clone https://gitlab+deploy-token-23:xzQLssogTa-t5igeXrv8@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf_recognizer_ros_msgs.git; \
@@ -68,12 +68,11 @@ RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
 
 RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
                   git clone https://gitlab+deploy-token-28:VxqryrgVYvjaUg4tyJdY@rgit.acin.tuwien.ac.at/msuchi/object_detector_msgs.git; \
-                  cd ppf_recognizer_ros_msgs; git checkout 05206cc5'
+                  cd object_detector_msgs; git checkout 49e1071e'
 
 RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /home/v4r/catkin_ws; catkin build -DPPFRecognizer_DIR=/home/v4r/ppf/build -DCMAKE_MODULE_PATH="/home/v4r/ppf/cmake;${CMAKE_MODULE_PATH}"'
 
 ## setup entrypoint
-COPY ./src/ppf/ros_entrypoint.sh /
-RUN sudo chmod +x /ros_entrypoint.sh
+COPY ./ros_entrypoint.sh /
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]
