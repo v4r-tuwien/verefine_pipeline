@@ -2,17 +2,21 @@ import numpy as np
 import rospy
 import ros_numpy
 import actionlib
-import tf
+# import tf
 
 import cv2
+import scipy.spatial.transform as scit
 
 import message_filters
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
-from sensor_msgs.msg import Image, Header
+from sensor_msgs.msg import Image
 from std_srvs.srv import Empty, EmptyResponse
 from object_detector_msgs.srv import detectron2_service_server, estimate_poses, refine_poses
-from grasping_pipeline.action import ExecuteGraspAction, ExecuteGraspGoal
-from sasha_handover.action import HandoverAction, HandoverGoal
+#from grasping_pipeline.msg import ExecuteGraspAction, ExecuteGraspGoal
+#from sasha_handover.msg import HandoverAction, HandoverGoal
+
+from src.util.dataset import YcbvDataset
+from src.util.renderer import Renderer
 
 
 # === define pipeline clients ===
@@ -22,7 +26,7 @@ def detect(rgb):
     try:
         detect_objects = rospy.ServiceProxy('detect_objects', detectron2_service_server)
         response = detect_objects(rgb)
-        return response.detections
+        return response.detections.detections
     except rospy.ServiceException as e:
         print("Service call failed: %s" % e)
 
@@ -59,15 +63,18 @@ class Grasper:
         self.depth = None
         self.working = False
 
-        self.pub_segmentation = rospy.Publisher("/hsr-grasping/segmentation", Image)
-        # self.pub_initial = rospy.Publisher("/hsr-grasping/initial_poses", Image)
-        # self.pub_refined = rospy.Publisher("/hsr-grasping/refined_poses", Image)
-        self.pub_poses = tf.TransformBroadcaster()
+        self.dataset = YcbvDataset()
+        self.renderer = Renderer(self.dataset)
+
+        self.pub_segmentation = rospy.Publisher("/hsr_grasping/segmentation", Image)
+        # self.pub_initial = rospy.Publisher("/hsr_grasping/initial_poses", Image)
+        # self.pub_refined = rospy.Publisher("/hsr_grasping/refined_poses", Image)
+        # self.pub_poses = tf.TransformBroadcaster()
 
     def rgbd_callback(self, rgb, depth):
-        print("callback...")
+        # print("callback...")
         if not self.working:
-            print("   set images")
+            # print("   set images")
             self.rgb, self.depth = rgb, depth
 
     def grasp(self, req):
@@ -79,18 +86,24 @@ class Grasper:
             return EmptyResponse()
 
         # === run pipeline ===
+
         self.working = True
+
+        self.renderer.create_egl_context()  # TODO needed?
 
         # detect all instances in image
         print("requesting detection...")
         detections = detect(self.rgb)
         print("   received detection.")
-        self.vis_detect(detections.detections)
+        if detections is None or len(detections) == 0:
+            print("nothing detected")
+            return EmptyResponse()
+        self.vis_detect(detections)
 
         # for each instance...
         poses = []
         confidences = []
-        for detection in detections.detections:
+        for detection in detections:
             # reject based on detection score
             if detection.score < 0.1:
                 print("detection of %s rejected" % detection.name)
@@ -100,6 +113,7 @@ class Grasper:
             print("requesting pose estimate...")
             instance_poses = estimate(self.rgb, self.depth, detection)
             print("   received pose.")
+            assert len(instance_poses) == 5  # TODO
             # for instance_pose in instance_poses:
             #   self.vis_pose(instance_poses, "_estimated")
 
@@ -107,12 +121,15 @@ class Grasper:
             print("requesting pose refinement...")
             instance_poses = refine(self.rgb, self.depth, detection, instance_poses)
             print("   received refined poses.")
+            if len(instance_poses) == 0:
+                print("all poses for %s rejected by refinement" % detection.name)
+                continue
             # for instance_pose in instance_poses:
             #   self.vis_pose(instance_poses, "_refined")
 
             # reject by pose confidence
             print(",".join(["%0.3f" % pose.confidence for pose in instance_poses]))
-            instance_poses = [pose for pose in instance_poses if pose.confidence > 0.3]
+            instance_poses = [pose for pose in instance_poses if pose.confidence > 0.1]
             # add to set of poses of detected instances
             if len(instance_poses) > 0:
                 poses += instance_poses
@@ -126,110 +143,69 @@ class Grasper:
         if len(confidences) > 0:
             best_hypothesis = np.argmax(confidences)
             best_pose = poses[best_hypothesis]
-            self.vis_pose(best_pose, "_pose")
-            print("... now we would annotate pose for %s" % best_pose.name)
+            self.vis_pose(best_pose)
         else:
-            best_pose = None
             print("no valid poses")
             return EmptyResponse()
 
         # === annotate grasp ===
 
-        grasp_offsets = {
-            "002_master_chef_can": [0, 0.065, 0],
-            "003_cracker_box": [0, 0.100, 0],
-            "004_sugar_box": [0, 0.083, 0],
-            "005_tomato_soup_can": [0, 0.036, 0],
-            "006_mustard_bottle": [0, 0.106, 0],  # slightly rotated around y
-            "007_tuna_fish_can": [0, 0.008, 0],
-            "008_pudding_box": [0, 0.015, 0],  # lying down, rotated by 45deg
-            "009_gelatin_box": [0, 0.011, 0],  # lying down, slightly rotated
-            "010_potted_meat_can": [0, 0.029, 0],
-            "011_banana": [0, 0.019, 0],  # lying down, "Stil" in +z dir
-            "019_pitcher_base": [0, 0.096, 0],
-            "021_bleach_cleanser": [0, 0.137, 0],
-            "024_bowl": [0.079, 0.027, 0],  # grasp point is on rim
-            "025_mug": [0.047, 0.040, 0],  # grasp point is on rim
-            "035_power_drill": [-0.024, 0.017, 0.041],  # lying down, grasp point is on handle
-            "036_wood_block": [0, 0.085, 0],  # standing upright, slightly rotated
-            "037_scissors": [-0.012, 0.005, -0.035],  # lying down, grasp point close to blades (base)
-            "040_large_marker": [0, 0.009, 0],
-            "051_large_clamp": [0, 0.013, 0],  # grasp point on joint, slightly rotated
-            "052_extra_large_clamp": [0, 0.019, 0],  # grasp point on joint, rotated by 90deg
-            "061_foam_brick": [0, 0.033, 0],  # holes up
-        }
-        T_grasp = np.matrix(np.eye(4))
-        T_grasp[:3, 3] = np.squeeze(grasp_offsets[best_pose.name])
+        # TODO annotate and select
 
-        # apply this as local transformation
-        r, t = ros_numpy.numpify(best_pose.orientation), ros_numpy.numpify(best_pose.position)
-        import scipy.spatial.transform as scit
-        R = scit.Rotation.from_quat(r).as_dcm()
-
-        T_obj = np.matrix(np.eye(4))
-        T_obj[:3, :3] = R
-        T_obj[:3, 3] = t
-
-        T_grasp = T_obj * T_grasp
-        print(T_grasp)
-
-        r = scit.Rotation.from_dcm(T_grasp[:3, :3]).as_quat()
-        t = T_grasp[:3, 3]
-        grasp_pose_stamped = PoseStamped()
-        grasp_pose_stamped.header = self.rgb.header
-
-        grasp_pose = Pose()
-        grasp_pose.position = ros_numpy.msgify(Point, t)
-        grasp_pose.orientation = ros_numpy.msgify(Quaternion, r)
-        self.vis_pose(grasp_pose, "_grasp")
-        grasp_pose_stamped.pose = grasp_pose
+        # grasp_pose_stamped = PoseStamped()
+        # grasp_pose_stamped.header = self.rgb.header
+        #
+        # self.vis_pose(best_pose, "_grasp")
+        # grasp_pose = best_pose.pose
+        # grasp_pose_stamped.pose = grasp_pose
 
         # === execute grasp (or stop) ===
-        # 1) if there is one left that is above threshold...
-        if best_pose:
-            print("trying to grasp %s (%0.2f)" % (best_pose.name, best_pose.confidence))
 
-            # a) grasp
-
-            client_grasp = actionlib.SimpleActionClient('execute_grasp', ExecuteGraspAction)
-            client_grasp.wait_for_server()
-
-            goal_grasp = ExecuteGraspGoal()
-            goal_grasp.grasp_pose = grasp_pose_stamped
-            goal_grasp.grasp_height = 0.03  # palm 3cm above grasp pose when grasping
-            goal_grasp.safety_distance = 0.15  # approach from 15cm above
-
-            client_grasp.send_goal(goal_grasp)
-            client_grasp.wait_for_result(rospy.Duration.from_sec(25.0))
-            state = client_grasp.get_state()
-            if state == 3:
-                print
-                client_grasp.get_result()
-            elif state == 4:
-                print
-                'Goal aborted'
-
-            # b) handover routine
-
-            client_handover = actionlib.SimpleActionClient('handover', HandoverAction)
-            client_handover.wait_for_server()
-
-            goal_handover = HandoverGoal()
-            goal_handover.force_thresh = 0.5  # default is 0.2
-
-            client_handover.send_goal(goal_handover)
-            client_handover.wait_for_result(rospy.Duration.from_sec(25.0))
-            state = client_handover.get_state()
-            if state == 3:
-                print
-                client_handover.get_result()
-            elif state == 4:
-                print
-                'Goal aborted'
-
-        # 2) ... none left -> stop
-        else:
-            print("nothing left to grasp (or rejected)")
+        # # 1) if there is one left that is above threshold...
+        # if best_pose:
+        #     print("trying to grasp %s (%0.2f)" % (best_pose.name, best_pose.confidence))
+        #
+        #     # a) grasp
+        #
+        #     client_grasp = actionlib.SimpleActionClient('execute_grasp', ExecuteGraspAction)
+        #     client_grasp.wait_for_server()
+        #
+        #     goal_grasp = ExecuteGraspGoal()
+        #     goal_grasp.grasp_pose = grasp_pose_stamped
+        #     goal_grasp.grasp_height = 0.03  # palm 3cm above grasp pose when grasping
+        #     goal_grasp.safety_distance = 0.15  # approach from 15cm above
+        #
+        #     client_grasp.send_goal(goal_grasp)
+        #     client_grasp.wait_for_result(rospy.Duration.from_sec(25.0))
+        #     state = client_grasp.get_state()
+        #     if state == 3:
+        #         print
+        #         client_grasp.get_result()
+        #     elif state == 4:
+        #         print
+        #         'Goal aborted'
+        #
+        #     # b) handover routine
+        #
+        #     client_handover = actionlib.SimpleActionClient('handover', HandoverAction)
+        #     client_handover.wait_for_server()
+        #
+        #     goal_handover = HandoverGoal()
+        #     goal_handover.force_thresh = 0.5  # default is 0.2
+        #
+        #     client_handover.send_goal(goal_handover)
+        #     client_handover.wait_for_result(rospy.Duration.from_sec(25.0))
+        #     state = client_handover.get_state()
+        #     if state == 3:
+        #         print
+        #         client_handover.get_result()
+        #     elif state == 4:
+        #         print
+        #         'Goal aborted'
+        #
+        # # 2) ... none left -> stop
+        # else:
+        #     print("nothing left to grasp (or rejected)")
 
         self.working = False
         return EmptyResponse()
@@ -260,13 +236,66 @@ class Grasper:
                         (255, 255, 255), 2, 1)
         vis_segmentation = np.uint8((rgb / 255 * 0.5 + vis_segmentation / 255 * 0.5) * 255)
 
-        ros_vis_segmentation = ros_numpy.msgify(vis_segmentation, Image)
+        ros_vis_segmentation = ros_numpy.msgify(Image, vis_segmentation, encoding="rgb8")
         self.pub_segmentation.publish(ros_vis_segmentation)
 
-    # TODO rendering-based visualizations for pose
-    def vis_pose(self, pose, suffix):
-        self.pub_poses.sendTransform(pose.position, pose.orientation, rospy.Time.now(), pose.name + suffix,
-                                     self.rgb.header.frame_id)
+    def vis_pose(self, pose):
+        rgb = ros_numpy.numpify(self.rgb)
+        intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
+                               0.0, 538.085452058436, 233.0483557773859,
+                               0.0, 0.0, 1.0]).reshape(3, 3)
+
+        name = pose.name
+        obj_id = -1
+        for idx, obj_name in self.dataset.obj_names.items():
+            if obj_name == name:
+                obj_id = idx + 1
+                break
+        assert obj_id > 0  # should start from 1
+
+        obj_ids = [obj_id]  # TODO expand to a list of poses
+        T_obj = np.matrix(np.eye(4))
+        T_obj[:3, :3] = scit.Rotation.from_quat(ros_numpy.numpify(pose.pose.orientation)).as_dcm()
+        T_obj[:3, 3] = ros_numpy.numpify(pose.pose.position).reshape(3, 1)
+        obj_trafos = [T_obj]
+        rendered = self.renderer.render(obj_ids, obj_trafos,
+                                        np.matrix(np.eye(4)), intrinsics,
+                                        mode='color+depth+seg')
+
+        vis_pose = np.float32(rgb.copy()) / 255
+        highlight = np.float32(rendered[0]) / 255
+        class_ids = np.unique(rendered[2])
+        for class_id in class_ids:
+            if class_id == 0:
+                continue
+
+            mask = rendered[2] == class_id
+            vis_pose[mask] = highlight[mask] * 0.7 + vis_pose[mask] * 0.3
+
+            _, contour, _ = cv2.findContours(np.uint8(mask), cv2.RETR_CCOMP,
+                                             cv2.CHAIN_APPROX_TC89_L1)
+            vis_pose = cv2.drawContours(vis_pose, contour, -1, (0, 1, 0), 1, lineType=cv2.LINE_AA)
+
+        vis_pose = np.uint8(vis_pose * 255)
+
+        import matplotlib.pyplot as plt
+
+        plt.subplot(1, 3, 1)
+        plt.imshow(rgb)
+        plt.subplot(1, 3, 2)
+        plt.imshow(rendered[0])
+        plt.subplot(1, 3, 3)
+        plt.imshow(vis_pose)
+        plt.show()
+        # TODO visualize detected plane
+
+        ros_vis_initial = ros_numpy.msgify(Image, vis_pose, encoding="rgb8")
+        self.pub_segmentation.publish(ros_vis_initial)
+
+    # def tf_pose(self, pose, suffix):
+    #     self.pub_poses.sendTransform(pose.pose.position, pose.pose.orientation, rospy.Time.now(), pose.name + suffix,
+    #                                  self.rgb.header.frame_id)
+
 
 if __name__ == "__main__":
     rospy.init_node("grasp_estimation_pipeline")

@@ -13,7 +13,7 @@ sys.path.append("/verefine/3rdparty/DenseFusion/lib")
 from lib.network import PoseNet, PoseRefineNet
 from lib.transformations import quaternion_matrix, quaternion_from_matrix
 
-from verefine.refiner_interface import Refiner
+from src.verefine.refiner_interface import Refiner
 
 
 class DenseFusion(Refiner):
@@ -21,8 +21,8 @@ class DenseFusion(Refiner):
     Code adapted and extended from DenseFusion implementation.
     """
 
-    def __init__(self, width, height, dataset, only_estimator=False):
-        Refiner.__init__(self)
+    def __init__(self, width, height, intrinsics, dataset, only_estimator=False, mode="base"):
+        Refiner.__init__(self, intrinsics, dataset, mode=mode)
 
         self.width, self.height = width, height
         self.dataset = dataset
@@ -151,6 +151,7 @@ class DenseFusion(Refiner):
 
             for hypothesis_id in range(hypotheses_per_instance):
                 instance_r = pred_r[0][which_max[hypothesis_id]].view(-1).cpu().data.numpy()  # w, x, y, z
+                instance_r = np.concatenate((instance_r[1:], [instance_r[0]]))
                 instance_t = (points + pred_t)[which_max[hypothesis_id]].view(-1).cpu().data.numpy()
 
                 # add to hypotheses
@@ -217,5 +218,6 @@ class DenseFusion(Refiner):
             my_r = my_r_final
             my_t = my_t_final
 
+        my_r = np.concatenate((my_r[1:], [my_r[0]]))
         hypothesis[0], hypothesis[1] = my_r, my_t
         return hypothesis

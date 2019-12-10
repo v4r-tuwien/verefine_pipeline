@@ -29,10 +29,10 @@ from src.densefusion.densefusion import DenseFusion
 if __name__ == "__main__":
 
     dataset = YcbvDataset()
-    densefusion = DenseFusion(640, 480, dataset, only_estimator=True)
     intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
                            0.0, 538.085452058436, 233.0483557773859,
                            0.0, 0.0, 1.0]).reshape(3, 3)
+    densefusion = DenseFusion(640, 480, intrinsics, dataset, only_estimator=True)
 
     def estimate(req):
         print("pose estimate requested...")
@@ -47,8 +47,6 @@ if __name__ == "__main__":
         depth = req.depth
         depth = ros_numpy.numpify(depth)
 
-        print(np.max(depth))
-
         # --- detection
         name = req.det.name
         obj_id = -1
@@ -62,11 +60,8 @@ if __name__ == "__main__":
         obj_roi = [bbox.ymin, bbox.xmin, bbox.ymax, bbox.xmax]
 
         mask_ids = req.det.mask
-        print(len(mask_ids))
         mask_ids = np.array(mask_ids)
-        print(mask_ids.shape)
         obj_mask = np.zeros((height * width), dtype=np.uint8)
-        print(obj_mask.shape)
         obj_mask[mask_ids] = 1
         obj_mask = obj_mask.reshape((height, width))
 

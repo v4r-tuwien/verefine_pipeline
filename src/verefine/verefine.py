@@ -3,7 +3,7 @@
 # TU Wien, Vienna
 
 import numpy as np
-import util.rotation as r  # TODO available in bop_toolkit?
+from scipy.spatial.transform.rotation import Rotation
 
 
 # ===================
@@ -57,7 +57,7 @@ def fit(observation, rendered):
     mask = np.logical_and(mask, depth_ren - depth_obs < TAU_VIS)  # only visible -- ren at most [TAU_VIS] behind obs
     dist = np.abs(depth_obs[mask] - depth_ren[mask])
     delta = np.mean(np.min(np.vstack((dist / TAU, np.ones(dist.shape[0]))), axis=0))
-    visibility_ratio = mask.sum() / (depth_ren > 0).sum()  # visible / rendered count
+    visibility_ratio = float(mask.sum()) / float((depth_ren > 0).sum())  # visible / rendered count
 
     fit = visibility_ratio * (1 - delta)
     if np.isnan(fit):  # invisible object
@@ -72,7 +72,7 @@ class Hypothesis:
     - "We assume that the object is present in the scene, under the given transformation."
     """
 
-    def __init__(self, model, transformation, roi, mask, embedding, cloud, instance_id=0, confidence=1.0, grasps=[]):
+    def __init__(self, model, transformation, roi, mask, embedding, cloud, instance_id=0, confidence=1.0):
         self.model = model
         self.instance_id = instance_id
         self.transformation = transformation
@@ -84,7 +84,6 @@ class Hypothesis:
         self.mask = mask  # segmentation + depth mask (on full image)
         self.embedding = embedding  # from DF
         self.cloud = cloud  # from DF
-        self.grasp_transformations = grasps
 
     def duplicate(self):
         """
@@ -94,7 +93,7 @@ class Hypothesis:
         return Hypothesis(model=self.model, transformation=self.transformation.copy(), roi=self.roi, mask=self.mask,
                           embedding=self.embedding,  # TODO compute embedding ad-hoc without estimation (for loading)
                           cloud=self.cloud,  # TODO for reproducibility -- the samples that were selected
-                          instance_id=self.instance_id, confidence=self.confidence, grasps=self.grasp_transformations)
+                          instance_id=self.instance_id, confidence=self.confidence)
 
     def render(self, observation, mode):
         """
@@ -131,43 +130,41 @@ class Hypothesis:
 # ===== PHYSIR =====
 # ==================
 
-from verefine.refiner_interface import Refiner
 
-
-class PhysIR(Refiner):
+class PhysIR:
 
     """
     TODO
     """
 
-    def __init__(self, refiner):
-        Refiner.__init__(self)
+    def __init__(self, refiner, simulator):
 
         self.refiner = refiner
+        self.simulator = simulator
         self.fixed = []
 
         # TODO where to move this config stuff?
         self.PHYSICS_STEPS = 20
         self.REFINEMENTS_PER_ITERATION = 1
 
-    def refine(self, rgb, depth, intrinsics, obj_roi, obj_mask, obj_id,
-               estimate, iterations=1):
+    def refine(self, hypothesis, refiner_params, override_iterations=-1):
         """
-        TODO
+
         :param hypothesis:
-        :param fixed:
+        :param refiner_params:
         :return:
         """
 
-        SIMULATOR.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
-        SIMULATOR.reset_objects()
+        iterations = refiner_params[-1] if override_iterations == -1 else override_iterations
+        self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
+        self.simulator.reset_objects()
 
         physics_hypotheses = []
         for ite in range(0, iterations):
             # === PHYSICS
             # on LM: 5ms, 100 * (iteration+1) steps, just use rotation
             solution = [[hypothesis]] + self.fixed
-            SIMULATOR.initialize_solution(solution)
+            self.simulator.initialize_solution(solution)
 
             # if config.FIX_OTHERS:
             #     for fix in self.fixed:
@@ -175,7 +172,7 @@ class PhysIR(Refiner):
 
             step_per_iter = self.PHYSICS_STEPS  # 20 on YCB, 100 on LM -- single hyp: *(iteration+1); multi hyp: constant
             steps = step_per_iter  # TODO step_per_iter * (iteration+1)
-            T_phys = SIMULATOR.simulate_no_render(hypothesis.id, delta=0.005, steps=steps)
+            T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=0.005, steps=steps)
 
             # if config.FIX_OTHERS:
             #     self.simulator.unfix()
@@ -186,8 +183,7 @@ class PhysIR(Refiner):
             physics_hypotheses.append(hypothesis.duplicate())
 
             # === DF
-            self.refiner.refine(rgb, depth, intrinsics, obj_roi, obj_mask, obj_id,
-                                estimate, iterations=self.REFINEMENTS_PER_ITERATION)
+            self.refiner.refine(*refiner_params)
         return physics_hypotheses
 
 
@@ -219,7 +215,7 @@ class BudgetAllocationBandit:
         self.rewards = [fit for fit in self.fits[:, 0]]  # init reward with fit of initial hypothesis
 
     # TODO caller has to handle the fixing of the environment
-    def refine(self, fixed=[]):
+    def refine(self, refiner_params, fixed=[]):
         iteration = np.sum(self.plays)
         if iteration < self.max_iter:
             # SELECT
@@ -233,7 +229,7 @@ class BudgetAllocationBandit:
 
             # ROLLOUT
             self.pir.fixed = fixed
-            physics_hypotheses = self.pir.refine(child, 1)
+            physics_hypotheses = self.pir.refine(child, refiner_params[hi], override_iterations=1)
             physics_child = physics_hypotheses[0]
             self.pir.fixed = []
 
@@ -252,9 +248,9 @@ class BudgetAllocationBandit:
 
             self.plays[hi] += 1
 
-    def refine_max(self, fixed=[]):
+    def refine_max(self, refiner_params, fixed=[]):
         for iteration in range(self.max_iter - np.sum(self.plays)):  # reduce by already played refinements
-            self.refine(fixed)
+            self.refine(refiner_params, fixed)
 
     def get_best(self):
         # select best fit and add it to final solution
@@ -652,8 +648,7 @@ class VerificationSolution:
 
         # move object in simulation
         position = T_obj[0:3, 3] + (R * np.array([[0], [0], [SIMULATOR.dataset.obj_coms[int(obj_str[:2]) - 1]]]))
-        orientation = r.matrix_to_quaternion(R)  # quaternion of form [w, x, y, z]
-        orientation = orientation[1:] + [orientation[0]]  # pybullet expects [x, y, z, w]
+        orientation = Rotation.from_dcm(R).as_quat()
         SIMULATOR.pyb.resetBasePositionAndOrientation(SIMULATOR.models[obj_str], position, orientation,
                                                       SIMULATOR.world)  # also sets v to 0
 
@@ -688,10 +683,9 @@ class VerificationSolution:
                                                                                 SIMULATOR.world)
             position = list(position)
             orientation = list(orientation)
-            orientation = [orientation[-1]] + orientation[:-1]  # pybullet returns [x, y, z, w]
 
             T_after = np.matrix(np.eye(4))
-            T_after[0:3, 0:3] = r.quaternion_to_matrix(orientation)
+            T_after[0:3, 0:3] = Rotation.from_quat(orientation).as_dcm()
             T_after[0:3, 3] = np.matrix(position).T \
                         - (T_after[0:3, 0:3] * np.array([[0], [0], [SIMULATOR.dataset.obj_coms[int(obj_str[:2]) - 1]]]))
 

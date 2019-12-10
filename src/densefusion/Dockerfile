@@ -1,6 +1,10 @@
-# use cuda and ros as base image
+# use opengl, cuda and ros as base image
+FROM nvidia/opengl:1.0-glvnd-runtime-ubuntu16.04 as nvidia
 FROM nvidia/cuda:9.0-cudnn7-devel-ubuntu16.04
 FROM ros:kinetic-ros-base
+
+COPY --from=nvidia /usr/local /usr/local
+COPY --from=nvidia /etc/ld.so.conf.d/glvnd.conf /etc/ld.so.conf.d/glvnd.conf
 
 ENV NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all
 
@@ -10,8 +14,12 @@ MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
 # essentials
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip python-catkin-tools \
+    apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip python-tk python-catkin-tools \
     && rm -rf /var/lib/apt/lists/*
+
+# for opengl/rendering
+RUN apt-get update && apt-get install -y libsm6 libglib2.0-0 libgl1-mesa-glx libpcl-dev libglfw3-dev libgles2-mesa-dev \
+    libgtk2.0-dev
 
 # create a catkin workspace
 WORKDIR /densefusion
@@ -46,6 +54,17 @@ RUN pip install --upgrade pip
 RUN pip install wheel  # smh get errors otherwise
 COPY ./src/densefusion/requirements.txt /densefusion/requirements.txt
 RUN pip install -r requirements.txt
+COPY ./src/verefine/requirements.txt /densefusion/requirements_verefine.txt
+RUN pip install -r requirements_verefine.txt
+COPY ./src/util/requirements.txt /densefusion/requirements_renderer.txt
+RUN pip install -r requirements_renderer.txt
+
+# install tinyobjloader from source (pypl doesn't work) -- required for rendering in verefine
+WORKDIR /task/3rdparty
+RUN pip install pybind11
+RUN git clone https://github.com/syoyo/tinyobjloader.git && \
+    cd tinyobjloader/python/ && \
+    python setup.py install
 
 # copy src files
 WORKDIR /densefusion
@@ -57,7 +76,9 @@ ENV PYTHONPATH=/densefusion:/densefusion/src:$PYTHONPATH
 
 # copy data
 COPY ./data /densefusion/data/
-#RUN unzip /densefusion/data/models.zip
+RUN mkdir /densefusion
+RUN mkdir /densefusion/data
+RUN unzip /densefusion/data/models.zip -d /verefine/data
 
 # entry point
 COPY ./src/densefusion/ros_entrypoint.sh /

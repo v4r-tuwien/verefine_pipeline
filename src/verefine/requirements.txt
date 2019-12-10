@@ -1,0 +1,5 @@
+numpy
+scipy==1.2.0
+pybullet==2.4.1
+python-pcl
+scikit-image

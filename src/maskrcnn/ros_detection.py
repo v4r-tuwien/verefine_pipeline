@@ -64,9 +64,7 @@ if __name__ == "__main__":
 
             # ---
             mask = masks[:, :, i]
-            print(mask.shape)
             mask_ids = np.argwhere(mask.reshape((height * width)) > 0)
-            print(mask_ids.shape)
             detection.mask = list(mask_ids.flat)
 
             # ---

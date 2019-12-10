@@ -6,15 +6,10 @@ import pybullet  # physics
 import pybullet_data
 
 import numpy as np
-from scipy.sparse import csgraph
 import logging
 # logging.basicConfig(format='%(message)s', level=logging.INFO, filename='simulate.log')
-
-import time
 import os
-import time
-
-import util.rotation as r  # TODO is there some functionality like this in bop toolkit?
+from scipy.spatial.transform.rotation import Rotation
 
 
 class Simulator:
@@ -116,10 +111,6 @@ class Simulator:
                     i_models.append(i_model)
                 else:
                     print("no model with id %i" % i_model)
-                #     model = pybullet.loadURDF("plane.urdf")
-                #
-                #     visual_shapes.append(None)
-                #     collision_shapes.append(None)
                 i_model += 1
 
             except Exception as ex:
@@ -173,7 +164,7 @@ class Simulator:
                 pybullet.setCollisionFilterGroupMask(self.models[obj_str], -1, 1, 1)
             else:
                 pybullet.resetBasePositionAndOrientation(self.models[obj_str], [-100, -100, -100],
-                                                         r.euler_to_quaternion([0] * 3),
+                                                         [0, 0, 0, 1],
                                                          self.world)
                 pybullet.setCollisionFilterGroupMask(self.models[obj_str], -1, 0, 0)
 
@@ -182,6 +173,7 @@ class Simulator:
         # 0... fix, >0... dynamic
         pybullet.changeDynamics(self.models[obj_str], -1, mass=0)
         self.fixed_hypotheses.append(obj_str)
+
     def unfix(self):
         for obj_str in self.fixed_hypotheses:
             mass = self.dataset.obj_masses[int(obj_str[:2])-1]
@@ -196,8 +188,7 @@ class Simulator:
 
     def world_to_bullet(self, in_world, id):
         R = in_world[0:3, 0:3]
-        orientation = r.matrix_to_quaternion(R)  # quaternion of form [w, x, y, z]
-        orientation = orientation[1:] + [orientation[0]]  # pybullet expects [x, y, z, w]
+        orientation = Rotation.from_dcm(R).as_quat()
 
         # position is offset by center of mass (origin of collider in physics world)
         position = in_world[0:3, 3] + (R * np.array([[0], [0], [self.dataset.obj_coms[int(id[:2]) - 1]]]))
@@ -206,8 +197,7 @@ class Simulator:
 
     def bullet_to_world(self, position, orientation, id):
         in_world = np.matrix(np.eye(4))
-        orientation = [orientation[-1]] + orientation[:-1]  # pybullet returns [x, y, z, w]
-        in_world[0:3, 0:3] = r.quaternion_to_matrix(orientation)
+        in_world[0:3, 0:3] = Rotation.from_quat(orientation).as_dcm()
         # position was offset by center of mass (origin of collider in physics world)
         in_world[0:3, 3] = np.matrix(position).T \
                     - (in_world[0:3, 0:3] * np.array([[0], [0], [self.dataset.obj_coms[int(id[:2]) - 1]]]))
@@ -219,10 +209,9 @@ class Simulator:
     def bullet_to_cam(self, position, orientation, id):
         return self.world_to_cam(self.bullet_to_world(position, orientation, id))
 
-    def initialize_solution(self, hypotheses):#, render_all_hypotheses=False):
+    def initialize_solution(self, hypotheses):
         # --- prepare scene models
         trafos = dict()
-        # if not render_all_hypotheses:
         for instance_hypotheses in hypotheses:
             for hypothesis in instance_hypotheses:
                 obj_str = hypothesis.id
@@ -236,22 +225,6 @@ class Simulator:
                 position, orientation = self.cam_to_bullet(T_obj, obj_str)
 
                 pybullet.resetBasePositionAndOrientation(self.models[obj_str], position, orientation, self.world)  # also sets v to 0
-        # else:
-        #     for hypotheses_per_object in hypotheses:
-        #         for hi, hypothesis in enumerate(hypotheses_per_object):
-        #             obj_str = hypothesis.id
-        #             if obj_str not in self.objects_to_use:
-        #                 continue
-        #             # obj_str += "" if hi == 0 else "(%0.2d)" % hi
-        #             T_obj = hypothesis.transformation.copy()
-        #
-        #             trafos[obj_str] = T_obj.copy()
-        #
-        #             # --- to pybullet
-        #             position, orientation = self.cam_to_bullet(T_obj, obj_str)
-        #
-        #             pybullet.resetBasePositionAndOrientation(self.models[obj_str], position, orientation,
-        #                                                      self.world)  # also sets v to 0
         return trafos
 
     def simulate_no_render(self, obj_str, delta, steps, solver_iterations=10, sub_steps=0, fix_others=True):
@@ -272,15 +245,8 @@ class Simulator:
                 else:
                     pybullet.changeDynamics(self.models[other_str], -1, mass=self.dataset.obj_masses[int(obj_str[:2])-1])
 
-        t_start = time.time()
-
-
         for i in range(steps):
             pybullet.stepSimulation()
-
-
-        self.runtimes.append((time.time() - t_start))
-        # print("physics took %ims" % (self.runtimes[-1] * 1000))
 
         # read-back transformation after simulation
         position, orientation = pybullet.getBasePositionAndOrientation(self.models[obj_str], self.world)
@@ -290,15 +256,3 @@ class Simulator:
         T_phys = self.bullet_to_cam(position, orientation, obj_str)
 
         return T_phys
-
-        # obj_ids = [self.dataset.objlist.index(int(obj_id[:2])) for obj_id in trafos.keys()]
-        # Rs = [T[:3, :3] for T in trafos.values()]
-        # ts = [T[:3, 3] for T in trafos.values()]
-        # view_matrix = np.matrix(self.vMatrix).reshape(4, 4).T * self.T_gl
-        # M = self.renderer.render(obj_ids, self.K, Rs, ts, mode=render_mode, view=view_matrix, proj=proj)
-        # if render_mode == 'depth':
-        #     M = np.zeros((480, 640, 3)), M, np.zeros((480, 640, 3))
-        #     # M = None, M, None
-        # elif render_mode == 'depth+seg':
-        #     M = (np.zeros((480, 640, 3)),) + M
-        #     # M = (None, ) + M

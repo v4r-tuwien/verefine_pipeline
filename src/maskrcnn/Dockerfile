@@ -34,18 +34,14 @@ RUN rosdep init  \
   && rosdep update
 
 # install ros packages
-# desktop full is required since its the only version that has both the  geometry and pcl packages
-# TODO: instead of using desktop-full install base ros version and only add required packages
 ENV ROS_DISTRO kinetic
 RUN apt-get update && apt-get install -y \
   ros-kinetic-ros-base=1.3.2-0* \
   && rm -rf /var/lib/apt/lists/*
 
-
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
      python-catkin-tools
-
 
 # create a catkin workspace
 WORKDIR /maskrcnn
@@ -85,9 +81,6 @@ RUN /bin/bash -c 'cd /maskrcnn/3rdparty; \
                   git clone https://github.com/eric-wieser/ros_numpy.git'
 WORKDIR /maskrcnn/3rdparty/ros_numpy
 RUN python3 setup.py install
-
-# trick from Kiru to get ROS Kinetic to work with Python 3.5
-#ENV PYTHONPATH=/usr/local/lib/python3.5/dist-packages:$PYTHONPATH
 
 # copy src files
 WORKDIR /maskrcnn
