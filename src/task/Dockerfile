@@ -1,9 +1,9 @@
 # use ros as base image
 FROM nvidia/opengl:1.0-glvnd-runtime-ubuntu16.04 as nvidia
-FROM ros:kinetic-ros-base
+#FROM ros:kinetic-ros-base
 
-COPY --from=nvidia /usr/local /usr/local
-COPY --from=nvidia /etc/ld.so.conf.d/glvnd.conf /etc/ld.so.conf.d/glvnd.conf
+#COPY --from=nvidia /usr/local /usr/local
+#COPY --from=nvidia /etc/ld.so.conf.d/glvnd.conf /etc/ld.so.conf.d/glvnd.conf
 
 MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
 
@@ -11,13 +11,44 @@ MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
 # essentials
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip python-tk python-catkin-tools \
-    && rm -rf /var/lib/apt/lists/*
+    apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip python-tk
 # TODO install TF
 
 # for opengl/rendering
-RUN apt-get update && apt-get install -y libsm6 libglib2.0-0 libgl1-mesa-glx libpcl-dev libglfw3-dev libgles2-mesa-dev \
+RUN apt-get install -y libsm6 libglib2.0-0 libgl1-mesa-glx libpcl-dev libglfw3-dev libgles2-mesa-dev \
     libgtk2.0-dev
+
+# -------- install ROS -----------------
+
+RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+
+# setup sources.list
+RUN echo "deb http://packages.ros.org/ros/ubuntu xenial main" > /etc/apt/sources.list.d/ros-latest.list
+
+# install bootstrap tools
+RUN apt-get update && apt-get install --no-install-recommends -y \
+  python-rosdep \
+  python-rosinstall \
+  python-vcstools
+
+# setup environment
+ENV LANG C.UTF-8
+ENV LC_ALL C.UTF-8
+
+# bootstrap rosdep
+RUN rosdep init  \
+  && rosdep update
+
+# install ros packages
+ENV ROS_DISTRO kinetic
+RUN apt-get install -y \
+  ros-kinetic-ros-base=1.3.2-0*
+
+RUN apt-get install -y --no-install-recommends \
+     python-catkin-tools \
+     && rm -rf /var/lib/apt/lists/*
+
+# ----------------
 
 # create a catkin workspace
 WORKDIR /task

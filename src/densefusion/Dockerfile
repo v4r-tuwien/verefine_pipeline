@@ -1,6 +1,7 @@
 # use opengl, cuda and ros as base image
 FROM nvidia/opengl:1.0-glvnd-runtime-ubuntu16.04 as nvidia
 FROM nvidia/cuda:9.0-cudnn7-devel-ubuntu16.04
+# TODO change for nvidia/cudagl:9.0-devel-ubuntu16.04
 FROM ros:kinetic-ros-base
 
 COPY --from=nvidia /usr/local /usr/local
