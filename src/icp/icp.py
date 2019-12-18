@@ -4,9 +4,9 @@ import numpy as np
 import cv2
 from scipy import ndimage
 
-from verefine.refiner_interface import Refiner
+from src.verefine.refiner_interface import Refiner
 
-from util.renderer import Renderer
+from src.util.renderer import Renderer
 
 
 class Icp(Refiner):
@@ -133,3 +133,130 @@ class Icp(Refiner):
         tf[:3, 3] = tra_pred / 1000  # in m
         tf = np.matmul(pose, tf)
         return tf, residual
+
+
+import pcl
+import open3d as o3d
+import sys
+sys.path.append("/home/dominik/projects/hsr-grasping/src/icp/cpp/build")
+import icp
+from scipy.spatial.transform.rotation import Rotation
+
+
+class TrimmedIcp(Refiner):
+
+    def __init__(self, renderer, intrinsics, dataset, mode):
+        Refiner.__init__(self, intrinsics, dataset, mode=mode)
+
+        self.renderer = renderer
+        self.width, self.height = renderer.width, renderer.height
+        self.umap = np.array([[j for _ in range(self.width)] for j in range(self.height)])
+        self.vmap = np.array([[i for i in range(self.width)] for _ in range(self.height)])
+        self.num_samples = 1000  # TODO how many samples required?
+
+    def depth_to_cloud(self, depth, intrinsics, label=None, roi=None):
+
+        mask_depth = np.ma.getmaskarray(np.ma.masked_not_equal(depth, 0))
+
+        if label is not None:
+            # get mask (from segmentation + valid depth values)
+            mask_label = np.ma.getmaskarray(np.ma.masked_equal(label, 1))
+            mask = mask_label * mask_depth
+        else:
+            mask = mask_depth
+
+        # get samples in mask
+        choose = mask.flatten().nonzero()[0]
+        if self.num_samples > 0:
+            if len(choose) > self.num_samples:
+                c_mask = np.zeros(len(choose), dtype=int)
+                c_mask[:self.num_samples] = 1
+                np.random.shuffle(c_mask)
+                choose = choose[c_mask.nonzero()]
+            elif len(choose) == 0:
+                return np.array([])
+            else:
+                choose = np.pad(choose, (0, self.num_samples - len(choose)), 'wrap')
+
+        # point cloud from depth -- image space (u, v, D) to camera space (X, Y, D)
+        D_masked = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
+        u_masked = self.umap.flatten()[choose][:, np.newaxis].astype(np.float32)
+        v_masked = self.vmap.flatten()[choose][:, np.newaxis].astype(np.float32)
+
+        fx, fy, cx, cy = intrinsics[0, 0], intrinsics[1, 1], intrinsics[0, 2], intrinsics[1, 2]
+        D_masked = D_masked  # in meters
+        X_masked = (v_masked - cx) * D_masked / fx
+        Y_masked = (u_masked - cy) * D_masked / fy
+        cloud = np.concatenate((X_masked, Y_masked, D_masked), axis=1)
+
+        return cloud
+
+    def refine(self, rgb, depth, intrinsics, roi, mask, obj_id,
+               estimate, iterations, cloud_obs=None, cloud_ren=None):
+
+        if cloud_obs is None:
+            cloud_obs = self.depth_to_cloud(depth / 1000.0, intrinsics, mask, roi)
+        if cloud_obs.shape[0] == 0:
+            return estimate
+
+        # TODO replace estimate with hypothesis -- then we can just call render method of h
+        # create estimated point cloud (TODO could just load model point cloud once and transform it here)
+        obj_id = self.renderer.dataset.objlist.index(obj_id)
+
+        q, t, c = estimate
+        obj_T = np.matrix(np.eye(4))
+        obj_T[:3, :3] = Rotation.from_quat(q).as_dcm()
+        obj_T[:3, 3] = t.reshape(3, 1)
+        rendered = self.renderer.render([obj_id], [obj_T],
+                                   np.matrix(np.eye(4)), intrinsics,
+                                   mode='depth')
+        cloud_ren = self.depth_to_cloud(rendered[1], intrinsics, rendered[1] > 0)
+        if cloud_ren.shape[0] == 0:
+            return estimate
+
+        # # -- icp
+        # # a) using pcl bindings
+        # # to pcd
+        # cloud_in = pcl.PointCloud()
+        # cloud_out = pcl.PointCloud()
+        # cloud_in.from_array(cloud_obs)
+        # cloud_out.from_array(cloud_ren)
+        #
+        # # icp
+        # icp = cloud_in.make_IterativeClosestPoint()
+        # converged, T, _, fit = icp.icp(cloud_in, cloud_out)
+
+        # # b) using o3d
+        # cloud_in = o3d.PointCloud()
+        # cloud_out = o3d.PointCloud()
+        # cloud_in.points = o3d.Vector3dVector(cloud_obs)
+        # cloud_out.points = o3d.Vector3dVector(cloud_ren)
+        #
+        # reg_p2p = o3d.registration.registration_icp(
+        #     cloud_in, cloud_out, 0.01, np.array(np.eye(4)),
+        #     o3d.registration.TransformationEstimationPointToPoint(),
+        #     o3d.registration.ICPConvergenceCriteria(relative_fitness=1e-6, relative_rmse=1e-6, max_iteration=30)
+        # )
+        # T = reg_p2p.transformation
+
+        # c) using own python bindings to pcl
+        T = icp.tricp(cloud_ren, cloud_obs, 0.5)
+        # TODO icp.icp (would this require normals? then we'd have to adapt the cpp code)
+
+        # -- apply trafo
+        new_obj_T = np.matrix(T) * obj_T
+
+        # # TODO debug
+        # new_rendered = self.renderer.render([obj_id], [new_obj_T],
+        #                                     np.matrix(np.eye(4)), intrinsics,
+        #                                     mode='depth')
+        # import matplotlib.pyplot as plt
+        # plt.subplot(1, 3, 1)
+        # plt.imshow(mask)
+        # plt.subplot(1, 3, 2)
+        # plt.imshow(rendered[1])
+        # plt.subplot(1, 3, 3)
+        # plt.imshow(new_rendered[1])
+        # plt.show()
+
+        return Rotation.from_dcm(new_obj_T[:3, :3]).as_quat(), np.array(new_obj_T[:3, 3]).T[0], c

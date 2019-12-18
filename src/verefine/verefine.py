@@ -104,7 +104,7 @@ class Hypothesis:
         """
         obj_id = RENDERER.dataset.objlist.index(int(self.id[:2]))  # TODO do this conversion in renderer
 
-        assert mode in ['color', 'depth', 'depth+seg', 'color+depth+seg']
+        assert mode in ['color', 'depth', 'depth+seg', 'color+depth+seg', 'cost']
 
         # TODO just pass a list of hypotheses alternatively
         rendered = RENDERER.render([obj_id], [self.transformation],
@@ -121,9 +121,14 @@ class Hypothesis:
         :return:
         """
 
-        rendered = self.render(observation, mode='depth')
+        # a) render depth, compute score on CPU
+        # rendered = self.render(observation, mode='depth')
+        # score = fit(observation, rendered)
 
-        return fit(observation, rendered)
+        # b) render depth, compute score on GPU
+        _, score = self.render(observation, "cost")
+
+        return score
 
 
 # ==================
@@ -155,7 +160,7 @@ class PhysIR:
         :return:
         """
 
-        iterations = refiner_params[-1] if override_iterations == -1 else override_iterations
+        iterations = refiner_params[-3] if override_iterations == -1 else override_iterations
         self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
         self.simulator.reset_objects()
 
@@ -172,19 +177,54 @@ class PhysIR:
 
             step_per_iter = self.PHYSICS_STEPS  # 20 on YCB, 100 on LM -- single hyp: *(iteration+1); multi hyp: constant
             steps = step_per_iter  # TODO step_per_iter * (iteration+1)
-            T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=0.005, steps=steps)
+            T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1/60.0, steps=6)  # equivalent to 20x5ms TODO was delta=0.005, steps=steps)
+
+            # compute displacement (0... high, 1... no displacement)
+            # disp_t = 1.0 - min(np.linalg.norm(T_phys[:3, 3] - hypothesis.transformation[:3, 3]) / (TAU/1000), 1.0)
+            # disp_q = max(0.0, np.dot(Rotation.from_dcm(T_phys[:3, :3]).as_quat(), Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat()))
 
             # if config.FIX_OTHERS:
             #     self.simulator.unfix()
 
             # just use the rotation -- both are in camera system, so do not need to change the offset
             hypothesis.transformation[:3, :3] = T_phys[:3, :3]  # only R
+            # hypothesis.confidence = disp_t * disp_q
 
             physics_hypotheses.append(hypothesis.duplicate())
 
             # === DF
-            self.refiner.refine(*refiner_params)
+            refiner_params[6] = [Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat(), np.array(hypothesis.transformation[:3, 3]).T[0], 1.0]
+            q, t, _ = self.refiner.refine(*refiner_params)
+            hypothesis.transformation[:3, :3] = Rotation.from_quat(q).as_dcm()
+            hypothesis.transformation[:3, 3] = t.reshape(3, 1)
+            # hypothesis.confidence = c
+            physics_hypotheses.append(hypothesis.duplicate())
         return physics_hypotheses
+
+    def simulate(self, hypothesis):
+        self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
+        self.simulator.reset_objects()
+
+        # === PHYSICS
+        # on LM: 5ms, 100 * (iteration+1) steps, just use rotation
+        solution = [[hypothesis]] + self.fixed
+        self.simulator.initialize_solution(solution)
+
+        # if config.FIX_OTHERS:
+        #     for fix in self.fixed:
+        #         self.simulator.fix_hypothesis(fix[0])
+
+        step_per_iter = self.PHYSICS_STEPS  # 20 on YCB, 100 on LM -- single hyp: *(iteration+1); multi hyp: constant
+        steps = step_per_iter  # TODO step_per_iter * (iteration+1)
+        T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1 / 60.0,
+                                                   steps=6)  # equivalent to 20x5ms TODO was delta=0.005, steps=steps)
+
+        # compute displacement (0... high, 1... no displacement)
+        disp_t = 1.0 - min(np.linalg.norm(T_phys[:3, 3] - hypothesis.transformation[:3, 3]) / (TAU / 1000), 1.0)
+        disp_q = max(0.0, np.dot(Rotation.from_dcm(T_phys[:3, :3]).as_quat(),
+                                 Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat()))
+
+        return disp_q * disp_t
 
 
 # ================================================================
@@ -209,7 +249,7 @@ class BudgetAllocationBandit:
         arms = len(hypotheses)
         self.fits = np.zeros((arms * 2, self.max_iter + 1))
         for hi, h in enumerate(hypotheses):
-            self.fits[hi] = h.fit(observation)
+            self.fits[hi] = h.fit(observation) #* self.pir.simulate(h)
 
         self.plays = [1] * arms
         self.rewards = [fit for fit in self.fits[:, 0]]  # init reward with fit of initial hypothesis
@@ -230,12 +270,17 @@ class BudgetAllocationBandit:
             # ROLLOUT
             self.pir.fixed = fixed
             physics_hypotheses = self.pir.refine(child, refiner_params[hi], override_iterations=1)
-            physics_child = physics_hypotheses[0]
+            physics_child = physics_hypotheses[-2]  # after last refinement step TODO was [0] - bc child was overwritten in refine?
+            child = physics_hypotheses[-1]
             self.pir.fixed = []
 
             # REWARD
-            reward = child.fit(self.observation)
-            reward_phys = physics_child.fit(self.observation)
+            reward = child.fit(self.observation) #* child.confidence
+            child.confidence = reward
+
+            # physics_child.confidence = self.pir.simulate(physics_child)
+            reward_phys = physics_child.fit(self.observation) #* physics_child.confidence
+            physics_child.confidence = reward_phys
 
             # BACKPROPAGATE
             self.fits[hi][self.plays[hi]] = reward
@@ -507,10 +552,17 @@ class SceneVerificationNode:
         obj_ids = [RENDERER.dataset.objlist.index(int(obj_hs[0].id[:2])) for obj_hs in scene_hypotheses]  # TODO do this conversion in renderer
         obj_trafos = [obj_hs[0].transformation for obj_hs in scene_hypotheses]
         # TODO just pass a list of hypotheses alternatively
-        rendered = RENDERER.render(obj_ids, obj_trafos,
+
+        # a) render depth, compute score on CPU
+        # rendered = RENDERER.render(obj_ids, obj_trafos,
+        #                            OBSERVATION['extrinsics'], OBSERVATION['intrinsics'],
+        #                            mode='depth')
+        # scene_reward = fit(OBSERVATION, rendered)
+
+        # b) render depth, compute score on GPU
+        rendered, scene_reward = RENDERER.render(obj_ids, obj_trafos,
                                    OBSERVATION['extrinsics'], OBSERVATION['intrinsics'],
-                                   mode='depth')
-        scene_reward = fit(OBSERVATION, rendered)
+                                   mode='cost')
 
         return scene_reward
 

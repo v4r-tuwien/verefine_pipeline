@@ -41,14 +41,15 @@ class DenseFusion(Refiner):
         self.bs = 1
 
         # init networks
-        estimate_model = '/densefusion/data/pose_model_26_0.012863246640872631.pth'
+        prefix = '../..' # TODO '/densefusion'
+        estimate_model = prefix + '/data/pose_model_26_0.012863246640872631.pth'
         self.estimator = PoseNet(num_points=self.num_points, num_obj=self.dataset.num_objects)
         self.estimator.cuda()
         self.estimator.load_state_dict(torch.load(estimate_model))
         self.estimator.eval()
 
         if not only_estimator:
-            refine_model = "/densefusion/data/pose_refine_model_69_0.009449292959118935.pth"  # TODO
+            refine_model = prefix + "/data/pose_refine_model_69_0.009449292959118935.pth"  # TODO
             self.refiner = PoseRefineNet(num_points=self.num_points, num_obj=self.dataset.num_objects)
             self.refiner.cuda()
             self.refiner.load_state_dict(torch.load(refine_model))
@@ -136,7 +137,7 @@ class DenseFusion(Refiner):
         # --- object pose estimation
         hypotheses = []
         try:
-            pred_r, pred_t, pred_c, _, cloud = self.forward(rgb, depth, intrinsics, roi, mask, class_id)
+            pred_r, pred_t, pred_c, emb, cloud = self.forward(rgb, depth, intrinsics, roi, mask, class_id)
 
             pred_c = pred_c.view(self.bs, self.num_points)
             pred_t = pred_t.view(self.bs * self.num_points, 1, 3)
@@ -151,16 +152,17 @@ class DenseFusion(Refiner):
 
             for hypothesis_id in range(hypotheses_per_instance):
                 instance_r = pred_r[0][which_max[hypothesis_id]].view(-1).cpu().data.numpy()  # w, x, y, z
-                instance_r = np.concatenate((instance_r[1:], [instance_r[0]]))
+                instance_r = np.concatenate((instance_r[1:], [instance_r[0]]))  # to x, y, z, w
                 instance_t = (points + pred_t)[which_max[hypothesis_id]].view(-1).cpu().data.numpy()
 
                 # add to hypotheses
                 hypotheses.append([instance_r.copy(), instance_t.copy(), how_max])
         except ZeroDivisionError:
             print("Detector lost object with id %i." % (class_id))
-        return hypotheses
+            emb, cloud = None, None
+        return hypotheses, emb, cloud
 
-    def refine(self, rgb, depth, intrinsics, roi, mask, class_id, hypothesis, iterations=1):
+    def refine(self, rgb, depth, intrinsics, roi, mask, class_id, hypothesis, iterations=1, emb=None, cloud=None):
         """
 
         :param rgb:
@@ -178,7 +180,9 @@ class DenseFusion(Refiner):
             raise NotImplementedError("'only_estimator' mode requested")
 
         my_r, my_t, _ = hypothesis
-        _, _, _, emb, cloud = self.forward(rgb, depth, intrinsics, roi, mask, class_id)
+        my_r = np.concatenate(([my_r[3]], my_r[:3]))  # to w, x, y, z
+        if emb is None or cloud is None:
+            _, _, _, emb, cloud = self.forward(rgb, depth, intrinsics, roi, mask, class_id)
 
         index = torch.LongTensor([class_id - 1])
         index = Variable(index).cuda()
@@ -186,9 +190,8 @@ class DenseFusion(Refiner):
         # refine [refinement_steps] times
         for ite in range(0, iterations):
             # TODO clean this up
-            num_points = 1000  # TODO
             T = Variable(torch.from_numpy(my_t.astype(np.float32))).cuda().view(1, 3) \
-                .repeat(num_points, 1).contiguous().view(1, num_points, 3)
+                .repeat(self.num_points, 1).contiguous().view(1, self.num_points, 3)
             my_mat = quaternion_matrix(my_r)
             R = Variable(torch.from_numpy(my_mat[:3, :3].astype(np.float32))).cuda().view(1, 3, 3)
             my_mat[0][3] = my_t[0]
@@ -218,6 +221,6 @@ class DenseFusion(Refiner):
             my_r = my_r_final
             my_t = my_t_final
 
-        my_r = np.concatenate((my_r[1:], [my_r[0]]))
+        my_r = np.concatenate((my_r[1:], [my_r[0]]))  # to x, y, z, w
         hypothesis[0], hypothesis[1] = my_r, my_t
         return hypothesis

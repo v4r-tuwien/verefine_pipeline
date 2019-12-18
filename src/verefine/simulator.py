@@ -9,6 +9,7 @@ import numpy as np
 import logging
 # logging.basicConfig(format='%(message)s', level=logging.INFO, filename='simulate.log')
 import os
+import time
 from scipy.spatial.transform.rotation import Rotation
 
 
@@ -78,7 +79,7 @@ class Simulator:
         for obj_name, model_path in zip(self.dataset.obj_names.values(), self.dataset.model_paths):
             logging.info("   %s" % model_path)
             try:
-                if i_model in self.dataset.objlist[1:]:
+                if i_model in self.dataset.objlist[1:] and i_model in self.objects_to_use:
                     # TODO debug
                     if ("simple" in model_path
                             and os.path.exists(model_path.replace("textured_simple", "collider_simple"))):  # only on YCB
@@ -162,10 +163,12 @@ class Simulator:
             # set collision
             if obj_str in self.objects_to_use or obj_str in fixed_hypotheses:
                 pybullet.setCollisionFilterGroupMask(self.models[obj_str], -1, 1, 1)
+                pass
             else:
-                pybullet.resetBasePositionAndOrientation(self.models[obj_str], [-100, -100, -100],
+                pybullet.resetBasePositionAndOrientation(self.models[obj_str], [0, 0, -5],
                                                          [0, 0, 0, 1],
                                                          self.world)
+                pybullet.changeDynamics(self.models[obj_str], -1, mass=0)
                 pybullet.setCollisionFilterGroupMask(self.models[obj_str], -1, 0, 0)
 
     def fix_hypothesis(self, hypothesis):
@@ -227,9 +230,12 @@ class Simulator:
                 pybullet.resetBasePositionAndOrientation(self.models[obj_str], position, orientation, self.world)  # also sets v to 0
         return trafos
 
-    def simulate_no_render(self, obj_str, delta, steps, solver_iterations=10, sub_steps=0, fix_others=True):
+    # TODO 2 substeps faster, 4 more precise -- evaluate performance difference
+    def simulate_no_render(self, obj_str, delta, steps, solver_iterations=10, sub_steps=4, fix_others=True):
         pybullet.resetBasePositionAndOrientation(self.planeId, [0,0,0], [0,0,0,1], self.world)
         pybullet.setCollisionFilterGroupMask(self.planeId, -1, 1, 1)
+
+        st = time.time()
 
         # set-up simulation
         pybullet.setTimeStep(delta)
@@ -244,15 +250,22 @@ class Simulator:
                     pybullet.changeDynamics(self.models[other_str], -1, mass=0)
                 else:
                     pybullet.changeDynamics(self.models[other_str], -1, mass=self.dataset.obj_masses[int(obj_str[:2])-1])
+        elapsed_setup = time.time() - st
 
+        st = time.time()
         for i in range(steps):
             pybullet.stepSimulation()
+        elapsed_sim = time.time() - st
 
+        st = time.time()
         # read-back transformation after simulation
         position, orientation = pybullet.getBasePositionAndOrientation(self.models[obj_str], self.world)
         position = list(position)
         orientation = list(orientation)
 
         T_phys = self.bullet_to_cam(position, orientation, obj_str)
+        elapsed_read = time.time() - st
+
+        self.runtimes.append([elapsed_setup, elapsed_sim, elapsed_read])
 
         return T_phys

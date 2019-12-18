@@ -1,11 +1,11 @@
 import abc
 import numpy as np
 
-import rospy
-from geometry_msgs.msg import Pose, Point, Quaternion
-from object_detector_msgs.msg import BoundingBox, Detection, PoseWithConfidence
-from object_detector_msgs.srv import refine_poses, refine_posesResponse
-import ros_numpy
+# import rospy
+# from geometry_msgs.msg import Pose, Point, Quaternion
+# from object_detector_msgs.msg import BoundingBox, Detection, PoseWithConfidence
+# from object_detector_msgs.srv import refine_poses, refine_posesResponse
+# import ros_numpy
 
 from scipy.spatial.transform.rotation import Rotation
 
@@ -23,12 +23,12 @@ class Refiner:
         self.dataset = dataset
         self.mode = mode  # base, pir, bab
 
-        if mode == "pir" or "bab":
-            self.plane_detector = PlaneDetector(640, 480, intrinsics, down_scale=4)
-            self.simulator = Simulator(dataset, instances_per_object=5)  # TODO match with num hypotheses
-            self.pir = PhysIR(self, self.simulator)
-        if mode == "bab":
-            self.renderer = Renderer(dataset)
+        # if mode == "pir" or "bab":
+        #     self.plane_detector = PlaneDetector(640, 480, intrinsics, down_scale=4)
+        #     self.simulator = Simulator(dataset, instances_per_object=5)  # TODO match with num hypotheses
+        #     self.pir = PhysIR(self, self.simulator)
+        # if mode == "bab":
+        #     self.renderer = Renderer(dataset)
 
     @abc.abstractmethod
     def refine(self, rgb, depth, intrinsics, obj_roi, obj_mask, obj_id,
@@ -120,7 +120,7 @@ class Refiner:
                 ]
                 refiner_params.append((rgb, depth, self.intrinsics, obj_roi, obj_mask, obj_id, estimate, iterations))
 
-            # refine
+            # refine # TODO called once per object!
             Verefine.RENDERER = self.renderer  # TODO more elegant solution? -> adapt BAB and SV implementation
             bab = BudgetAllocationBandit(self.pir, observation, hypotheses)  # TODO define max iter here
             bab.refine_max(refiner_params)

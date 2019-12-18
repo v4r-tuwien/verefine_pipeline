@@ -20,7 +20,7 @@ class YcbvDataset:
 
     """
 
-    def __init__(self):
+    def __init__(self, base_path="/verefine/data/"):
         # specify dataset
         # self.dataset = 'ycbv'
         # self.dataset_split = 'test'
@@ -113,7 +113,7 @@ class YcbvDataset:
         ]
         self.obj_coms = [com * 0.5 for com in self.obj_coms]
 
-        self.base_path = "/verefine/data/"  # TODO dependent on BOP, not YCBV
+        self.base_path = base_path  # TODO dependent on BOP, not YCBV
         self.model_paths = sorted(glob.glob(
             self.base_path + "/models/*/textured_simple.obj"))  # -> obj_01 will have id 1 in segmentation mask
         self.mesh_scale = [1.0] * 3
