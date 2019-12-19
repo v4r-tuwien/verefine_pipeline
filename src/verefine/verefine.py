@@ -72,7 +72,8 @@ class Hypothesis:
     - "We assume that the object is present in the scene, under the given transformation."
     """
 
-    def __init__(self, model, transformation, roi, mask, embedding, cloud, instance_id=0, confidence=1.0):
+    def __init__(self, model, transformation, roi, mask, embedding, cloud, instance_id=0, confidence=1.0,
+                 refiner_param=None):
         self.model = model
         self.instance_id = instance_id
         self.transformation = transformation
@@ -85,17 +86,19 @@ class Hypothesis:
         self.embedding = embedding  # from DF
         self.cloud = cloud  # from DF
 
+        self.refiner_param = refiner_param
+
     def duplicate(self):
         """
         TODO
         :return:
         """
         return Hypothesis(model=self.model, transformation=self.transformation.copy(), roi=self.roi, mask=self.mask,
-                          embedding=self.embedding,  # TODO compute embedding ad-hoc without estimation (for loading)
-                          cloud=self.cloud,  # TODO for reproducibility -- the samples that were selected
-                          instance_id=self.instance_id, confidence=self.confidence)
+                          embedding=None,  # TODO compute embedding ad-hoc without estimation (for loading)
+                          cloud=None,  # TODO for reproducibility -- the samples that were selected
+                          instance_id=self.instance_id, confidence=self.confidence, refiner_param=self.refiner_param)
 
-    def render(self, observation, mode):
+    def render(self, observation, mode, fixed=[]):
         """
         TODO
         :param observation:
@@ -107,13 +110,15 @@ class Hypothesis:
         assert mode in ['color', 'depth', 'depth+seg', 'color+depth+seg', 'cost']
 
         # TODO just pass a list of hypotheses alternatively
-        rendered = RENDERER.render([obj_id], [self.transformation],
+        obj_ids = [obj_id] + [RENDERER.dataset.objlist.index(int(other[0].id[:2])) for other in fixed]
+        transformations = [self.transformation] + [other[0].transformation for other in fixed]
+        rendered = RENDERER.render(obj_ids, transformations,
                                    observation['extrinsics'], observation['intrinsics'],
-                                   mode=mode)#, bbox=self.roi)
+                                   mode=mode, cost_id=None)#(1 << obj_id))  # if mode is cost, only compute cost for this hypothesis
 
         return rendered
 
-    def fit(self, observation):
+    def fit(self, observation, fixed=[]):
         """
         TODO mention PoseRBPF
         :param observation:
@@ -126,7 +131,7 @@ class Hypothesis:
         # score = fit(observation, rendered)
 
         # b) render depth, compute score on GPU
-        _, score = self.render(observation, "cost")
+        _, score = self.render(observation, "cost", fixed)
 
         return score
 
@@ -152,15 +157,14 @@ class PhysIR:
         self.PHYSICS_STEPS = 20
         self.REFINEMENTS_PER_ITERATION = 1
 
-    def refine(self, hypothesis, refiner_params, override_iterations=-1):
+    def refine(self, hypothesis, override_iterations=-1):
         """
 
         :param hypothesis:
-        :param refiner_params:
         :return:
         """
 
-        iterations = refiner_params[-3] if override_iterations == -1 else override_iterations
+        iterations = hypothesis.refiner_param[-3] if override_iterations == -1 else override_iterations
         self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
         self.simulator.reset_objects()
 
@@ -177,7 +181,7 @@ class PhysIR:
 
             step_per_iter = self.PHYSICS_STEPS  # 20 on YCB, 100 on LM -- single hyp: *(iteration+1); multi hyp: constant
             steps = step_per_iter  # TODO step_per_iter * (iteration+1)
-            T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1/60.0, steps=6)  # equivalent to 20x5ms TODO was delta=0.005, steps=steps)
+            T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1/60.0, steps=6)  # 3 equivalent to 10x5ms (paper for YCBV) TODO was delta=0.005, steps=steps)
 
             # compute displacement (0... high, 1... no displacement)
             # disp_t = 1.0 - min(np.linalg.norm(T_phys[:3, 3] - hypothesis.transformation[:3, 3]) / (TAU/1000), 1.0)
@@ -193,8 +197,9 @@ class PhysIR:
             physics_hypotheses.append(hypothesis.duplicate())
 
             # === DF
-            refiner_params[6] = [Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat(), np.array(hypothesis.transformation[:3, 3]).T[0], 1.0]
-            q, t, _ = self.refiner.refine(*refiner_params)
+            hypothesis.refiner_param[6] = [Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat(),
+                                           np.array(hypothesis.transformation[:3, 3]).T[0], 1.0]
+            q, t, _ = self.refiner.refine(*hypothesis.refiner_param)
             hypothesis.transformation[:3, :3] = Rotation.from_quat(q).as_dcm()
             hypothesis.transformation[:3, 3] = t.reshape(3, 1)
             # hypothesis.confidence = c
@@ -214,13 +219,12 @@ class PhysIR:
         #     for fix in self.fixed:
         #         self.simulator.fix_hypothesis(fix[0])
 
-        step_per_iter = self.PHYSICS_STEPS  # 20 on YCB, 100 on LM -- single hyp: *(iteration+1); multi hyp: constant
-        steps = step_per_iter  # TODO step_per_iter * (iteration+1)
         T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1 / 60.0,
-                                                   steps=6)  # equivalent to 20x5ms TODO was delta=0.005, steps=steps)
+                                                   steps=3)  # 3 are equivalent to 10x5ms (paper)
 
-        # compute displacement (0... high, 1... no displacement)
-        disp_t = 1.0 - min(np.linalg.norm(T_phys[:3, 3] - hypothesis.transformation[:3, 3]) / (TAU / 1000), 1.0)
+        # compute displacement (0... high, 1... no displacement) TODO consider all objects or just new one?
+        max_displacement = 9.81 * (3/60.0)**2  # [m]
+        disp_t = 1.0 - min(np.linalg.norm(T_phys[:3, 3] - hypothesis.transformation[:3, 3]) / max_displacement, 1.0)
         disp_q = max(0.0, np.dot(Rotation.from_dcm(T_phys[:3, :3]).as_quat(),
                                  Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat()))
 
@@ -237,7 +241,7 @@ class BudgetAllocationBandit:
     TODO
     """
 
-    def __init__(self, pir, observation, hypotheses):
+    def __init__(self, pir, observation, hypotheses, fixed=[]):
         self.pir = pir
         self.observation = observation
 
@@ -246,16 +250,22 @@ class BudgetAllocationBandit:
 
         # ---
         # INIT
+
+        self.factor = 0.0  # e.g. 0.1 -> at most 0.1 change in reward due to stability -- 0 for DF, >0 for PCS
+
         arms = len(hypotheses)
         self.fits = np.zeros((arms * 2, self.max_iter + 1))
+        # self.pir.fixed = fixed
         for hi, h in enumerate(hypotheses):
-            self.fits[hi] = h.fit(observation) #* self.pir.simulate(h)
+            stability = 0.0#self.pir.simulate(h) * self.factor if self.factor > 0 else 0.0
+            self.fits[hi] = h.fit(observation, fixed=fixed) * (1.0 - self.factor) + stability
+        # self.pir.fixed = []
 
         self.plays = [1] * arms
         self.rewards = [fit for fit in self.fits[:, 0]]  # init reward with fit of initial hypothesis
 
     # TODO caller has to handle the fixing of the environment
-    def refine(self, refiner_params, fixed=[]):
+    def refine(self, fixed=[]):
         iteration = np.sum(self.plays)
         if iteration < self.max_iter:
             # SELECT
@@ -269,17 +279,17 @@ class BudgetAllocationBandit:
 
             # ROLLOUT
             self.pir.fixed = fixed
-            physics_hypotheses = self.pir.refine(child, refiner_params[hi], override_iterations=1)
+            physics_hypotheses = self.pir.refine(child, override_iterations=1)
             physics_child = physics_hypotheses[-2]  # after last refinement step TODO was [0] - bc child was overwritten in refine?
             child = physics_hypotheses[-1]
-            self.pir.fixed = []
 
-            # REWARD
-            reward = child.fit(self.observation) #* child.confidence
+            # REWARD  # TODO render fixed hypotheses as well? but cost only for object -- stimulate with fixed!
+            stability = 0.0 #self.pir.simulate(child) * self.factor if self.factor > 0 else 0.0
+            reward = child.fit(self.observation, fixed=[]) * (1.0 - self.factor) + stability
             child.confidence = reward
 
-            # physics_child.confidence = self.pir.simulate(physics_child)
-            reward_phys = physics_child.fit(self.observation) #* physics_child.confidence
+            stability_phys = 0.0#self.pir.simulate(physics_child) * self.factor if self.factor > 0 else 0.0
+            reward_phys = physics_child.fit(self.observation, fixed=[]) * (1.0 - self.factor) + stability_phys
             physics_child.confidence = reward_phys
 
             # BACKPROPAGATE
@@ -292,10 +302,11 @@ class BudgetAllocationBandit:
                         self.plays[hi] + 1.0)  # running mean
 
             self.plays[hi] += 1
+            self.pir.fixed.clear()  # reset s.t. at any time original state is retained
 
-    def refine_max(self, refiner_params, fixed=[]):
+    def refine_max(self, fixed=[]):
         for iteration in range(self.max_iter - np.sum(self.plays)):  # reduce by already played refinements
-            self.refine(refiner_params, fixed)
+            self.refine(fixed)
 
     def get_best(self):
         # select best fit and add it to final solution
@@ -308,6 +319,9 @@ class BudgetAllocationBandit:
 # =========================================
 # ===== MCTS Scene-level Verification =====
 # =========================================
+import time
+duration_select, duration_expand, duration_rollout, duration_backprop = [], [], [], []
+
 
 def verefine_solution(hypotheses_pool):
     """
@@ -349,16 +363,24 @@ def verefine_solution(hypotheses_pool):
             print("   - verifine for %i iterations..." % (max_iterations))
         for iteration in range(max_iterations):
             # --- SELECTION - apply selection policy as long as we have the statistics (i.e., fully expanded)
+            st = time.time()
             selected_node = root.select()  #
+            duration_select.append(time.time()-st)
 
             # --- EXPANSION - apply expansion policy to get new node
+            st = time.time()
             new_node = selected_node.expand(use_heuristic=USE_HEURISTIC_EXPANSION)
+            duration_expand.append(time.time() - st)
 
             # --- ROLLOUT - nested bandit to generate rollout policy - compute scene reward for tree
+            st = time.time()
             reward = new_node.rollout()
+            duration_rollout.append(time.time() - st)
 
             # --- BACKPROPAGATION - update statistics of nodes that we descended through
+            st = time.time()
             new_node.backpropagate(reward)
+            duration_backprop.append(time.time() - st)
         if DEBUG_PLOT:
             print("%s, %0.3f" % tuple(root.get_best()))
 
@@ -413,6 +435,7 @@ def verefine_solution(hypotheses_pool):
 
         final_hypotheses += cluster_hypotheses
         final_reward += reward  # TODO actually would have to render scene with all clusters and compute overall reward
+
     return final_hypotheses, final_reward
 
 
@@ -560,9 +583,14 @@ class SceneVerificationNode:
         # scene_reward = fit(OBSERVATION, rendered)
 
         # b) render depth, compute score on GPU
+        cost_id = None  # consider fit of full scene
+        # only consider fit of selected objects -> but considers occlusion
+        # cost_id = 0
+        # for v in [RENDERER.dataset.objlist.index(int(obj_hs[0].id[:2])) for obj_hs in selected_hypotheses]:  #obj_ids:
+        #     cost_id |= (1 << v)
         rendered, scene_reward = RENDERER.render(obj_ids, obj_trafos,
                                    OBSERVATION['extrinsics'], OBSERVATION['intrinsics'],
-                                   mode='cost')
+                                   mode='cost', cost_id=cost_id)
 
         return scene_reward
 
@@ -633,6 +661,10 @@ class VerificationSolution:
 
     def verify_candidates(self):
 
+        # if len(self.selection_order) > 0:
+        #     if self.selection_order[0] == '19':
+        #         a = 1
+
         # print("-> selected %s" % self.selection_order[-1])
         adjacency = list(self.candidates[0].keys())  # TODO could actually compute this for floor as well - then we even save the drop test
         if EXPAND_ADJACENT:
@@ -648,10 +680,15 @@ class VerificationSolution:
 
         # get candidates
         candidates = []
+        outliers = []
         for hi, (obj_id, obj_hs) in enumerate(self.candidates[0].items()):
             if obj_id in adjacency or adjacency is None:
                 h = obj_hs[0]  # TODO only take max-conf one? or current best? or use all and select most stable?
                 candidates.append(h)
+            else:
+                outliers.append(obj_id)
+        for obj_id in outliers:
+            self.candidates[0].pop(obj_id)
 
         if len(candidates) == 0:
             return
@@ -761,7 +798,9 @@ class VerificationSolution:
 
         # add object (and RefinementSolution) to selected
         # refinement_solution = RefinementSolution(candidate_hypotheses.copy())
-        refinement_solution = BudgetAllocationBandit(REFINER, OBSERVATION, candidate_hypotheses)
+        fixed = [[s.get_best()[0]] for s in list(self.selected.values())]
+        refinement_solution = BudgetAllocationBandit(REFINER, OBSERVATION, candidate_hypotheses,
+                                                     fixed=fixed)
         new_selected = self.selected.copy()
         new_selected[obj_id] = refinement_solution
         new_selection_order = self.selection_order.copy()
@@ -844,9 +883,7 @@ def cluster(hypotheses_pool):
     # -> iteratively extend the block while the candidate region contains nonzero elements (i.e. is connected)
     clusters = [[r[0]]]
     for i in range(1, len(r)):
-        if np.any(adjacency[
-                      clusters[-1], r[
-                          i]]):  # ri connected to current cluster? -> add ri to cluster
+        if np.any(adjacency[clusters[-1], r[i]]):  # ri connected to current cluster? -> add ri to cluster
             clusters[-1].append(r[i])
         else:  # otherwise: start a new cluster with ri
             clusters.append([r[i]])

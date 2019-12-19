@@ -59,6 +59,7 @@ void main() {
 """
 
 _fragment_code = """
+#extension GL_EXT_gpu_shader4 : enable
 uniform sampler2D u_texture;
 uniform sampler2D u_observation;
 uniform int u_use_texture;
@@ -85,34 +86,39 @@ void main() {
     else if(u_mode == 2) {
         gl_FragColor = vec4(v_eye_depth, u_obj_id, 0.0, 1.0);
     }
-    else {  // cost in shader
-        float ren_depth = float(texture2D(u_texture, v_texcoord).x) * 1000.0;//v_eye_depth*1000.0;
-        float obs_depth = float(texture2D(u_observation, v_texcoord).x);
-        
-        float rendered = 1.0;
-        if (ren_depth < 1.0) {
-            rendered = 0.0;
-        }
-        
-        float valid = 1.0;
-        if (ren_depth < 1.0 || obs_depth < 1.0) {
-            valid = 0.0;
-        }
-        
-        float visible = 0.0;
-        float delta = 0.0;
-        if (valid == 1.0) {
-            float difference = ren_depth - obs_depth;
+    else {  // cost in shader       
+        /*if (u_obj_id > 0 && ((int(texture2D(u_texture, v_texcoord).y) & (1 << u_obj_id)) == 0)) {
+            // if u_obj_id is set, compute the cost only for the given object -- otherwise for all objects
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        } else {*/
+            float ren_depth = float(texture2D(u_texture, v_texcoord).x) * 1000.0;//v_eye_depth*1000.0;
+            float obs_depth = float(texture2D(u_observation, v_texcoord).x);
             
-            if (difference < 10.0) {
-                visible = 1.0;  // only visible -- ren at most [TAU_VIS] behind obs
+            float rendered = 1.0;
+            if (ren_depth < 1.0) {
+                rendered = 0.0;
+            }
+            
+            float valid = 1.0;
+            if (ren_depth < 1.0 || obs_depth < 1.0) {
+                valid = 0.0;
+            }
+            
+            float visible = 0.0;
+            float delta = 0.0;
+            if (valid == 1.0) {
+                float difference = ren_depth - obs_depth;
                 
-                float distance = abs(difference);
-                delta = min(distance / 20.0, 1.0); // difference is always positive
-            } 
-        }
-        
-        gl_FragColor = vec4(rendered, visible, delta, 1.0);
+                if (difference < 10.0) {
+                    visible = 1.0;  // only visible -- ren at most [TAU_VIS] behind obs
+                    
+                    float distance = abs(difference);
+                    delta = min(distance / 20.0, 1.0); // difference is always positive
+                } 
+            }
+            
+            gl_FragColor = vec4(rendered, visible, delta, 1.0);
+        //}
     }
 }
 """
@@ -347,6 +353,7 @@ class Renderer:
         # well-defined surface (e.g. the lamp from the dataset of Hinterstoisser)
         gl.glDisable(gl.GL_CULL_FACE)
 
+        self.observation = None
         self.runtimes = []
 
     def setup_egl(self):
@@ -451,7 +458,7 @@ class Renderer:
         self.observation = (observation.astype(np.float32)[::-1, :, :]).view(gloo.TextureFloat2D)  # TODO or do i have the UVs upside down?
         self.program['u_observation'] = self.observation
 
-    def _draw(self, model_ids, model_trafos, mat_view, mat_proj, mode, bbox):
+    def _draw(self, model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id):
 
         assert mode in ['color', 'depth', 'depth+seg', 'cost']
 
@@ -459,11 +466,11 @@ class Renderer:
 
         # self.activate_egl_context()
 
-        if mode == 'depth' or mode == 'cost':
+        if mode == 'depth' or (mode == 'cost' and cost_id is None):
             dims = 1
             format = gl.GL_RED
             self.program['u_mode'] = 1
-        elif mode == 'depth+seg':
+        elif mode == 'depth+seg' or (mode == 'cost' and cost_id > 0):
             dims = 2
             format = gl.GL_RG
             self.program['u_mode'] = 2
@@ -521,7 +528,7 @@ class Renderer:
 
             self.program['u_mv'] = np.eye(4)
             self.program['u_mvp'] = np.eye(4)
-            self.program['u_obj_id'] = 0
+            self.program['u_obj_id'] = 0 if cost_id is None else cost_id
             self.screenquad.draw(self.program, False)
 
             # st = time.time()
@@ -655,7 +662,7 @@ class Renderer:
 
     #-------------------------------------------------------------------------------
     def render(self, model_ids, model_trafos, extrinsics, intrinsics, mode='depth+seg',
-               perspective=True, top=False, bbox=None):
+               perspective=True, top=False, bbox=None, cost_id=None):
 
         t_start = time.time()
 
@@ -682,17 +689,19 @@ class Renderer:
             # TODO is it much faster to have a single draw and multiple read-backs for e.g. color+depth+seg?
 
         rgb, depth, seg = None, None, None
-        if mode == 'depth' or mode == 'cost':  # depth-only
-            buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox)
+        if mode == 'depth' or (mode == 'cost' and cost_id is None):  # depth-only
+            buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
             if mode == 'cost':
                 buffer, cost = buffer
             depth = buffer[:, :, 0].astype(np.float32)
         else:
             if 'color' in mode:
-                buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, 'color', bbox)
+                buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, 'color', bbox, cost_id)
                 rgb = np.round(buffer[:, :, :3] * 255).astype(np.uint8)  # Convert to [0, 255]
-            if 'depth+seg' in mode:
-                buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, 'depth+seg', bbox)
+            if 'depth+seg' in mode or (mode == 'cost' and cost_id > 0):
+                buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
+                if mode == 'cost':
+                    buffer, cost = buffer
                 depth = buffer[:, :, 0].astype(np.float32)
                 seg = buffer[:, :, 1].astype(np.uint8)
 

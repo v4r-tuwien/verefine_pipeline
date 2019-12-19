@@ -21,7 +21,7 @@ from src.icp.icp import TrimmedIcp
 PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
 PATH_YCBV = "/mnt/Data/datasets/YCB Video/YCB_Video_Dataset/"
 
-MODE = "BAB"  # "BASE", "PIR", "BAB"
+MODE = "VF"  # "BASE", "PIR", "BAB", "SV", "VF"
 EST_MODE = "DF"  # "DF", "PCS"
 REF_MODE = "DF"  # "DF", "ICP"
 SEGMENTATION = "PCNN"  # GT, PCNN
@@ -52,13 +52,6 @@ obj_names = {
     21: "061_foam_brick"
 }
 
-
-def render(obj_ids, transformations, extrinsics, intrinsics, mode):
-    # assert mode in ['color', 'depth', 'depth+seg', 'color+depth+seg']
-
-    return renderer.render(obj_ids, transformations, extrinsics, intrinsics, mode=mode)
-
-
 # -----------------
 
 if __name__ == "__main__":
@@ -74,7 +67,8 @@ if __name__ == "__main__":
         # renderer.create_egl_context()
 
     if MODE != "BASE":
-        simulator = Simulator(dataset)#, objects_to_use=[1, 6, 9, 12, 14, 16, 17, 19, 20, 21])
+        simulator = Simulator(dataset, instances_per_object=Verefine.HYPOTHESES_PER_OBJECT)#, objects_to_use=[1, 6, 9, 12, 14, 16, 17, 19, 20, 21])
+        Verefine.SIMULATOR = simulator
         pir = None
 
 
@@ -160,6 +154,7 @@ if __name__ == "__main__":
 
                 if MODE != "BASE":
                     pir = PhysIR(ref, simulator)
+                    Verefine.REFINER = pir
 
             # get pose estimates
             obj_ids_ = [int(v) for v in meta['rois'][:, 1]]
@@ -258,7 +253,7 @@ if __name__ == "__main__":
                         new_hypotheses = []
                         new_refiner_params = []
                         confidences = []
-                        for obj_hypothesis in obj_hypotheses:
+                        for hi, obj_hypothesis in enumerate(obj_hypotheses):
                             parts = obj_hypothesis.split(" ")
                             parts = [float(v.replace("\n", "")) for v in parts]
                             q = np.array(parts[4:-1] + [parts[3]])
@@ -270,11 +265,14 @@ if __name__ == "__main__":
                             obj_T[:3, 3] = t.reshape(3, 1)
                             estimate = [q, t, c]
 
+                            refiner_param = [rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate,
+                                             Verefine.ITERATIONS, emb, cloud]
                             new_hypotheses.append(
-                                Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, obj_mask, None, None, 0, c))
-                            new_refiner_params.append(
-                                [rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate,
-                                 Verefine.ITERATIONS, emb, cloud])
+                                Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, obj_mask, None, None, hi, c,
+                                           refiner_param=refiner_param))
+                            # new_refiner_params.append(
+                            #     [rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate,
+                            #      Verefine.ITERATIONS, emb, cloud])
                             confidences.append(c)
 
                         # only select the [HYPOTHESES_PER_OBJECT] best hypotheses
@@ -287,13 +285,16 @@ if __name__ == "__main__":
                         # a) take n estimates
                         new_hypotheses = []
                         new_refiner_params = []
-                        for estimate in estimates:
+                        for hi, estimate in enumerate(estimates):
                             obj_T = np.matrix(np.eye(4))
                             obj_T[:3, :3] = Rotation.from_quat(estimate[0]).as_dcm()
                             obj_T[:3, 3] = estimate[1].reshape(3, 1)
                             obj_confidence = estimate[2]
-                            new_hypotheses.append(Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, obj_mask, None, None, 0, obj_confidence))
-                            new_refiner_params.append([rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate, Verefine.ITERATIONS, emb, cloud])
+                            refiner_param = [rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate,
+                                             Verefine.ITERATIONS, emb, cloud]
+                            new_hypotheses.append(Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, obj_mask, None, None, hi,
+                                                             obj_confidence, refiner_param=refiner_param))
+                            # new_refiner_params.append([rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate, Verefine.ITERATIONS, emb, cloud])
                             if REF_MODE == "ICP":
                                 refiner_params[-1][-2:] = None, None
                         hypotheses += [new_hypotheses]
@@ -341,17 +342,19 @@ if __name__ == "__main__":
                 # init frame
                 simulator.initialize_frame(camera_extrinsics)
             if MODE != "BASE" or REF_MODE == "ICP":
-                renderer.set_observation(depth.reshape(480, 640, 1))
+                obs = depth.reshape(480, 640, 1)
+            #     obs[labels == 0] = 0  # makes results worse (with PCNN seg)
+                renderer.set_observation(obs)
 
             if MODE == "BASE":
                 # DF (base)
                 refinements = 0
                 # refine only max conf
-                for obj_hypotheses, obj_refiner_params in zip(hypotheses, refiner_params):
-                    hypothesis, refiner_param = obj_hypotheses[0], obj_refiner_params[0]  # only take best
+                for obj_hypotheses in hypotheses:
+                    hypothesis = obj_hypotheses[0]  # only take best
 
                     # refinements += refiner_param[-3]
-                    q, t, c = ref.refine(*refiner_param)
+                    q, t, c = ref.refine(*hypothesis.refiner_param)
 
                     hypothesis.transformation[:3, :3] = Rotation.from_quat(q).as_dcm()
                     hypothesis.transformation[:3, 3] = t.reshape(3, 1)
@@ -359,18 +362,15 @@ if __name__ == "__main__":
                     final_hypotheses.append(hypothesis)
                 # print(refinements)
 
-            if MODE == "PIR":
+            elif MODE == "PIR":
                 # PIR
-                refinements = 0
-                for obj_hypotheses, obj_refiner_params in zip(hypotheses, refiner_params):
-                    hypothesis, refiner_param = obj_hypotheses[0], obj_refiner_params[0]  # only take best
-                    refinements += refiner_param[-3]
-                    phys_hypotheses = pir.refine(hypothesis, refiner_param)
+                for obj_hypotheses in hypotheses:
+                    hypothesis = obj_hypotheses[0]  # only take best
+                    phys_hypotheses = pir.refine(hypothesis)
 
                     final_hypotheses.append(phys_hypotheses[-1])  # pick hypothesis after last refinement step
-                # print(refinements)
 
-            if MODE == "BAB":
+            elif MODE == "BAB":
                 # BAB (with PIR)
                 observation = {
                     "depth": depth,
@@ -378,12 +378,12 @@ if __name__ == "__main__":
                     "intrinsics": camera_intrinsics
                 }
                 refinements = 0
-                for obj_hypotheses, obj_refiner_params in zip(hypotheses, refiner_params):
+                for obj_hypotheses in hypotheses:
                     # set according to actual number of hypotheses (could be less for PCS if we don't find enough)
                     Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(obj_hypotheses)
 
                     bab = BudgetAllocationBandit(pir, observation, obj_hypotheses)
-                    bab.refine_max(obj_refiner_params)
+                    bab.refine_max()
                     hypothesis, plays, fit = bab.get_best()
                     assert hypothesis is not None
                     final_hypotheses.append(hypothesis)
@@ -391,11 +391,28 @@ if __name__ == "__main__":
                     refinements += bab.max_iter - len(obj_hypotheses)  # don't count initial render
                 # print(refinements)
 
+            elif MODE == "SV":
+                pass  # TODO this should be similar to mitash, just everything at scene level -> no BAB, adapt candidate generation
+
+            elif MODE == "VF":
+                observation = {
+                    "depth": depth,
+                    "extrinsics": camera_extrinsics,
+                    "intrinsics": camera_intrinsics
+                }
+                hypotheses_pool = dict()
+                for obj_hypotheses in hypotheses:
+                    hypotheses_pool[obj_hypotheses[0].model] = obj_hypotheses
+
+                Verefine.OBSERVATION = observation
+                final_hypotheses, final_fit = Verefine.verefine_solution(hypotheses_pool)
+                final_hypotheses = [hs[0] for hs in final_hypotheses]
+
             durations.append(time.time() - st)
 
             # write results
             for hypothesis in final_hypotheses:
-                with open("/home/dominik/projects/hsr-grasping/test-bab_ycbv-test.csv", 'a') as file:
+                with open("/home/dominik/projects/hsr-grasping/vf2_ycbv-test.csv", 'a') as file:
                     parts = ["%0.2d" % scene, "%i" % frame, "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
                              " ".join(["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
                              " ".join(["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
@@ -404,9 +421,14 @@ if __name__ == "__main__":
 
     print("total = %0.1fms" % (np.mean(durations)*1000))
     print("total (w/o first) = %0.1fms" % (np.mean(durations[1:])*1000))
-    # print("------")
+    print("------")
     # print("setup = %0.1fms" % (np.mean(simulator.runtimes, axis=0)[0]*1000))
     # print("sim   = %0.1fms" % (np.mean(simulator.runtimes, axis=0)[1]*1000))
     # print("read  = %0.1fms" % (np.mean(simulator.runtimes, axis=0)[2]*1000))
+    if MODE in ["SV", "VF"]:
+        print("sel = %0.1fms" % (np.mean(Verefine.duration_select) * 1000))
+        print("exp = %0.1fms" % (np.mean(Verefine.duration_expand) * 1000))
+        print("rol = %0.1fms" % (np.mean(Verefine.duration_rollout) * 1000))
+        print("bac = %0.1fms" % (np.mean(Verefine.duration_backprop) * 1000))
     if MODE != "BASE":
         simulator.deinitialize()
