@@ -87,7 +87,7 @@ void main() {
         gl_FragColor = vec4(v_eye_depth, u_obj_id, 0.0, 1.0);
     }
     else {  // cost in shader       
-        /*if (u_obj_id > 0 && ((int(texture2D(u_texture, v_texcoord).y) & (1 << u_obj_id)) == 0)) {
+        /*if (u_obj_id > 0 && ((1 << int(texture2D(u_texture, v_texcoord).y) & u_obj_id) == 0)) {
             // if u_obj_id is set, compute the cost only for the given object -- otherwise for all objects
             gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         } else {*/
@@ -122,15 +122,7 @@ void main() {
     }
 }
 """
-# depth_obs = observation / 10
-# depth_ren = rendered * 1000  # in mm TODO or do this in renderer?
-#
-# mask = np.logical_and(depth_ren > 0, depth_obs > 0)
-# if np.count_nonzero(mask) == 0:  # no valid depth values
-#     return 0
-#
-# mask = np.logical_and(mask,
-#                       depth_ren - depth_obs < 10)  # only visible -- ren at most [TAU_VIS] behind obs
+
 
 class Model:
 
