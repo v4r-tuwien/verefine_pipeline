@@ -6,7 +6,9 @@ In hsr-grasping:
 `docker build -f src/densefusion/Dockerfile . -t densefusion`
 
 ## Run densefusion
-`docker run -it --net=host --volume=/home/dominik/projects/hsr-grasping:/hsr-grasping densefusion /bin/bash`
+`docker run -it --runtime=nvidia --net=host --volume=/home/dominik/projects/hsr-grasping:/hsr-grasping densefusion`
+
+to prevent ros_pose.sh from executing, add --entrypoint="/bin/bash"
 
 ## Run verefine
 `xhost +local:'hostname'` \
