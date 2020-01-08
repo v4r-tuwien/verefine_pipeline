@@ -231,7 +231,7 @@ class Simulator:
         return trafos
 
     # TODO 2 substeps faster, 4 more precise -- evaluate performance difference
-    def simulate_no_render(self, obj_str, delta, steps, solver_iterations=10, sub_steps=4, fix_others=True):
+    def simulate_no_render(self, obj_str, delta, steps, solver_iterations=10, sub_steps=4, fix_others=False):
         pybullet.resetBasePositionAndOrientation(self.planeId, [0,0,0], [0,0,0,1], self.world)
         pybullet.setCollisionFilterGroupMask(self.planeId, -1, 1, 1)
 

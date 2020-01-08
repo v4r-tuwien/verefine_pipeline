@@ -15,6 +15,7 @@ USE_COLLISION_CLUSTERING = True  # else rendering-based version
 USE_ICP = False  # else use DF as refiner
 FIX_OTHERS = True  # whether to fix supporting objects in their best hypothesis (True) or simulate them as well (False)
 EXPAND_ADJACENT = True  # whether to only expand adjacent objects (True) or based on <2cm displacement (False)
+TRACK_CONVERGENCE = False  # get best hypotheses at each iteration of SV (1 iter ~ [OV budget] iterations of plain MCTS)
 # POLICY = UCB
 C = 0.1 #
 
@@ -165,8 +166,8 @@ class PhysIR:
         """
 
         iterations = hypothesis.refiner_param[-3] if override_iterations == -1 else override_iterations
-        self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
-        self.simulator.reset_objects()
+        # self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
+        # self.simulator.reset_objects()
 
         physics_hypotheses = []
         for ite in range(0, iterations):
@@ -279,7 +280,9 @@ class BudgetAllocationBandit:
 
             # ROLLOUT
             self.pir.fixed = fixed
+            SIMULATOR.objects_to_use.append(child.id)
             physics_hypotheses = self.pir.refine(child, override_iterations=1)
+            SIMULATOR.objects_to_use = SIMULATOR.objects_to_use[:-1]
             physics_child = physics_hypotheses[-2]  # after last refinement step TODO was [0] - bc child was overwritten in refine?
             child = physics_hypotheses[-1]
 
@@ -302,7 +305,7 @@ class BudgetAllocationBandit:
                         self.plays[hi] + 1.0)  # running mean
 
             self.plays[hi] += 1
-            self.pir.fixed.clear()  # reset s.t. at any time original state is retained
+            self.pir.fixed = []  # reset s.t. at any time original state is retained
 
     def refine_max(self, fixed=[]):
         for iteration in range(self.max_iter - np.sum(self.plays)):  # reduce by already played refinements
@@ -349,6 +352,66 @@ def verefine_solution(hypotheses_pool):
     """
     VEReFINE
     """
+
+    # TODO where to put this?
+    SceneVerificationNode.best_per_object = {}
+    SceneVerificationNode.best_scene = [-1, None]
+
+    def print_tree(node):
+        if node is not None:
+            print(node)
+            for child in node.children:
+                print_tree(child)
+
+    def best_per_object(node):
+        if node is None:
+            return
+        if node.refiner is not None:
+            h, plays, fit = node.refiner.get_best()
+            if fit > best_fit_per_object[h.model]:
+                best_fit_per_object[h.model] = fit
+                best_h_per_object[h.model] = h
+
+        for child in node.children:
+            h, plays, fit = child.refiner.get_best()
+            if fit > best_fit_per_object[h.model]:
+                best_fit_per_object[h.model] = fit
+                best_h_per_object[h.model] = h
+            best_per_object(child)
+
+    def best_scene(node, best_reward=-1):
+        if node is None:
+            return -1, None
+
+        best_node = node
+
+        # # a) highest reward
+        # for child in node.children:
+        #     if child.best_reward > best_reward:  # TODO child.reward or child.best_reward?
+        #         best_reward, best_node = best_scene(child, child.reward)
+        # return best_reward, best_node
+
+        # b) most-played path until end
+        if len(node.children) > 0:
+            most_played, most_plays = None, -1
+            for child in node.children:
+                if child.plays > most_plays:
+                    most_plays = child.plays
+                    most_played = child
+            best_node = best_scene(most_played)[1]
+
+        # # c) best-reward path until end
+        # if len(node.children) > 0:
+        #     most_played, most_plays = None, -1
+        #     for child in node.children:
+        #         if child.best_reward > most_plays:
+        #             most_plays = child.best_reward
+        #             most_played = child
+        #     best_node = best_scene(most_played)[1]
+
+        return best_node.reward, best_node
+
+    convergence_hypotheses = []
     final_hypotheses = []
     final_reward = 0
     for hypotheses_pool, adjacency in zip(hypotheses_pools, adjacencies):
@@ -376,11 +439,47 @@ def verefine_solution(hypotheses_pool):
             st = time.time()
             reward = new_node.rollout()
             duration_rollout.append(time.time() - st)
+            # print(duration_rollout[-1])
 
             # --- BACKPROPAGATION - update statistics of nodes that we descended through
             st = time.time()
             new_node.backpropagate(reward)
             duration_backprop.append(time.time() - st)
+
+            # --- DEBUG - analyze convergence
+            if TRACK_CONVERGENCE:
+
+                best_fit_per_object = {}
+                best_h_per_object = {}
+                for obj_str in list(hypotheses_pool.keys()):
+                    best_fit_per_object[obj_str] = -1
+                    best_h_per_object[obj_str] = None
+                #
+                # # a) gather best hypotheses (per object) in tree
+                # best_per_object(root)
+
+                # b) best scene
+                best_scene_reward, best_scene_node = best_scene(root)  # SceneVerificationNode.best_scene
+                while best_scene_node.parent is not None:
+                    cur_hyp, _, cur_fit = best_scene_node.refiner.get_best()
+                    best_h_per_object[cur_hyp.model] = cur_hyp
+                    best_fit_per_object[cur_hyp.model] = cur_fit
+
+                    best_scene_node = best_scene_node.parent
+
+                # to old format + add missing objects
+                cluster_hypotheses = []
+                for obj_str, h_best in best_h_per_object.items():
+                    # # TODO missing object; refine it without considering other objects
+                    if h_best is None and obj_str in SceneVerificationNode.best_per_object:
+                        h_best = SceneVerificationNode.best_per_object[obj_str][
+                            1]  # TODO could also check [0] to reject bad fit
+
+                    if h_best is not None:
+                        cluster_hypotheses.append([h_best])
+
+                convergence_hypotheses.append(cluster_hypotheses)
+
         if DEBUG_PLOT:
             print("%s, %0.3f" % tuple(root.get_best()))
 
@@ -390,41 +489,31 @@ def verefine_solution(hypotheses_pool):
         for obj_str in list(hypotheses_pool.keys()):
             best_fit_per_object[obj_str] = -1
             best_h_per_object[obj_str] = None
+        #
+        # # a) gather best hypotheses (per object) in tree
+        # best_per_object(root)
 
-        # gather best hypotheses (per object) in tree
-        def print_tree(node):
-            if node is not None:
-                print(node)
-                for child in node.children:
-                    print_tree(child)
+        # b) best scene
+        best_scene_reward, best_scene_node = best_scene(root)  # SceneVerificationNode.best_scene
+        while best_scene_node.parent is not None:
+            cur_hyp, _, cur_fit = best_scene_node.refiner.get_best()
+            best_h_per_object[cur_hyp.model] = cur_hyp
+            best_fit_per_object[cur_hyp.model] = cur_fit
 
-        def best_per_object(node):
-            if node is None:
-                return
-            if node.refiner is not None:
-                h, plays, fit = node.refiner.get_best()
-                if fit > best_fit_per_object[h.model]:
-                    best_fit_per_object[h.model] = fit
-                    best_h_per_object[h.model] = h
-
-            for child in node.children:
-                h, plays, fit = child.refiner.get_best()
-                if fit > best_fit_per_object[h.model]:
-                    best_fit_per_object[h.model] = fit
-                    best_h_per_object[h.model] = h
-                best_per_object(child)
-
-        best_per_object(root)
+            best_scene_node = best_scene_node.parent
 
         # to old format + add missing objects
         cluster_hypotheses = []
         for obj_str, h_best in best_h_per_object.items():
             # # TODO missing object; refine it without considering other objects
             if h_best is None:
-                refiner = BudgetAllocationBandit(REFINER, OBSERVATION, hypotheses_pool[obj_str])
-                for iteration in range(ITERATIONS):
-                    refiner.refine()
-                h_best = refiner.get_best()[0]
+                # refiner = BudgetAllocationBandit(REFINER, OBSERVATION, hypotheses_pool[obj_str])
+                # for iteration in range(ITERATIONS):
+                #     refiner.refine()
+                # h_best = refiner.get_best()[0]
+                if obj_str in SceneVerificationNode.best_per_object:
+                    # if SceneVerificationNode.best_per_object[obj_str][0] > 0.1:  # TODO reject bad fit?
+                    h_best = SceneVerificationNode.best_per_object[obj_str][1]
 
             if h_best is not None:
                 cluster_hypotheses.append([h_best])
@@ -436,7 +525,7 @@ def verefine_solution(hypotheses_pool):
         final_hypotheses += cluster_hypotheses
         final_reward += reward  # TODO actually would have to render scene with all clusters and compute overall reward
 
-    return final_hypotheses, final_reward
+    return final_hypotheses, final_reward, convergence_hypotheses
 
 
 class SceneVerificationNode:
@@ -444,6 +533,9 @@ class SceneVerificationNode:
     """
     Node of search tree
     """
+
+    best_scene = [-1, None]
+    best_per_object = {}
 
     def __init__(self, solution, parent=None):
         self.solution = solution
@@ -534,6 +626,7 @@ class SceneVerificationNode:
         selected_hypotheses = []
         SIMULATOR.objects_to_use = []
         SIMULATOR.reset_objects()
+        # TODO fix everything - just unfix the current hypothesis
         for current in descent_path:
 
             if current.refiner is None:
@@ -542,16 +635,23 @@ class SceneVerificationNode:
 
             # === REFINER
             if REFINE_AT_ONCE:
-                current.refiner.refine_max()#TODO fixed=selected_hypotheses) is this already covered by adding fix_hypothesis and unfix below?
+                current.refiner.refine_max(fixed=selected_hypotheses)  # TODO is this already covered by adding fix_hypothesis and unfix below?
             else:  # only one iteration
-                current.refiner.refine()#fixed=selected_hypotheses)
+                current.refiner.refine(fixed=selected_hypotheses)
 
             # === update fixed objects
             # get best hypothesis up till now
-            best_hypothesis = current.refiner.get_best()[0]
+            best_hypothesis, _, best_fit = current.refiner.get_best()
+
+            # keep track of best hypothesis per object
+            if best_hypothesis.model not in SceneVerificationNode.best_per_object:
+                SceneVerificationNode.best_per_object[best_hypothesis.model] = [best_fit, best_hypothesis]
+            elif SceneVerificationNode.best_per_object[best_hypothesis.model][0] < best_fit:
+                SceneVerificationNode.best_per_object[best_hypothesis.model] = [best_fit, best_hypothesis]
 
             # # fix this object (with best hypothesis) in simulation for further refinements in descent path
             SIMULATOR.fix_hypothesis(best_hypothesis)
+            SIMULATOR.objects_to_use.append(best_hypothesis.id)
 
             # store for final solution
             selected_hypotheses.append([best_hypothesis])
@@ -566,8 +666,19 @@ class SceneVerificationNode:
         all_objects = root.solution.initial_candidates[0]
         # --- randomly select one hypothesis of the missing objects
         selected_names = [obj_hs[0].model for obj_hs in selected_hypotheses]
+        # a)
         missing_hypotheses = [[np.random.choice(obj_hyps)] for obj_name, obj_hyps in all_objects.items() if
-                              obj_name not in selected_names]
+                              obj_name not in selected_names]  # TODO only if fit of missing is good enough? otherwise crap may bias search
+
+        # b) TODO useful? take best known hypothesis of missing objects -- if useful, could also do scoring of initial candidates and initialize best_per_object accordingly
+        # missing_hypotheses = []
+        # for obj_name, obj_hyps in all_objects.items():
+        #     if obj_name in SceneVerificationNode.best_per_object:
+        #         if SceneVerificationNode.best_per_object[obj_name][0] > 0.1:  # TODO only if fit is good enough?
+        #             missing_hypotheses.append([SceneVerificationNode.best_per_object[obj_name][1]])
+        #     else:
+        #         missing_hypotheses.append([np.random.choice(obj_hyps)])
+
         # --- add to already fixed hypotheses
         scene_hypotheses = selected_hypotheses + missing_hypotheses
 
@@ -591,6 +702,10 @@ class SceneVerificationNode:
         rendered, scene_reward = RENDERER.render(obj_ids, obj_trafos,
                                    OBSERVATION['extrinsics'], OBSERVATION['intrinsics'],
                                    mode='cost', cost_id=cost_id)
+
+        # keep track of best scene TODO this is more expensive than finding this out afterwards
+        # if SceneVerificationNode.best_scene[0] < scene_reward:
+        #     SceneVerificationNode.best_scene = [scene_reward, self]
 
         return scene_reward
 

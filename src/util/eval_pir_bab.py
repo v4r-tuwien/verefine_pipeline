@@ -8,6 +8,21 @@ from scipy.spatial.transform.rotation import Rotation
 import os
 import PIL
 import time
+import torch
+import gc
+import random
+
+# make reproducible
+seed = 0
+torch.manual_seed(seed)  # cpu
+np.random.seed(seed)
+random.seed(seed)
+
+torch.backends.cudnn.deterministic = True
+# torch.backends.cudnn.benchmark = False
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(seed)  # gpu
+    torch.cuda.manual_seed_all(seed)
 
 from src.util.fast_renderer import Renderer
 from src.util.dataset import YcbvDataset
@@ -18,6 +33,7 @@ import src.verefine.verefine as Verefine
 from src.icp.icp import TrimmedIcp
 
 
+# settings
 PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
 PATH_YCBV = "/mnt/Data/datasets/YCB Video/YCB_Video_Dataset/"
 
@@ -91,7 +107,7 @@ if __name__ == "__main__":
 
     # loop over scenes...
     objects = []
-    scenes = [48]  # sorted(np.unique(scene_ids))
+    scenes = [48]  # sorted(np.unique(scene_ids))  #
     for scene in scenes:
         print("scene %i..." % scene)
         scene_target_indices = np.argwhere(scene_ids == scene)
@@ -164,6 +180,11 @@ if __name__ == "__main__":
             estimates = []
             refiner_params = []
             n_obj = 0
+
+            # TODO still a bit leaky -- check using fast.ai GPUMemTrace
+            gc.collect()
+            torch.cuda.empty_cache()
+
             for obj_id, obj_pose, obj_roi in zip(obj_ids_, obj_poses, meta['rois']):
                 objects.append(obj_id)
                 # obj_q = obj_pose[:4]
@@ -405,7 +426,27 @@ if __name__ == "__main__":
                     hypotheses_pool[obj_hypotheses[0].model] = obj_hypotheses
 
                 Verefine.OBSERVATION = observation
-                final_hypotheses, final_fit = Verefine.verefine_solution(hypotheses_pool)
+                final_hypotheses, final_fit, convergence_hypotheses = Verefine.verefine_solution(hypotheses_pool)
+
+                if Verefine.TRACK_CONVERGENCE:
+                    # fill-up to 200 with final hypothesis
+                    convergence_hypotheses += [final_hypotheses] * (200 - len(convergence_hypotheses))
+
+                    # write results
+                    for convergence_iteration, iteration_hypotheses in enumerate(convergence_hypotheses):
+                        iteration_hypotheses = [hs[0] for hs in iteration_hypotheses]
+                        for hypothesis in iteration_hypotheses:
+                            with open("/home/dominik/projects/hsr-grasping/convergence-vf2/%0.3d_ycbv-test.csv"
+                                      % convergence_iteration, 'a') as file:
+                                parts = ["%0.2d" % scene, "%i" % frame, "%i" % int(hypothesis.model),
+                                         "%0.3f" % hypothesis.confidence,
+                                         " ".join(
+                                             ["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
+                                         " ".join(
+                                             ["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
+                                         "%0.3f" % 1.0]
+                                file.write(",".join(parts) + "\n")
+
                 final_hypotheses = [hs[0] for hs in final_hypotheses]
 
             durations.append(time.time() - st)
