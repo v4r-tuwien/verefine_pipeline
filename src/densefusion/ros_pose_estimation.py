@@ -82,7 +82,7 @@ if __name__ == "__main__":
             # --- pose
             pose.pose = Pose()
             pose.pose.position = ros_numpy.msgify(Point, t)
-            r = np.concatenate((r[1:],[r[0]]))  # ros_numpy expects x, y, z, w
+#            r = np.concatenate((r[1:],[r[0]]))  # ros_numpy expects x, y, z, w
             pose.pose.orientation = ros_numpy.msgify(Quaternion, r)
 
             # --- confidence

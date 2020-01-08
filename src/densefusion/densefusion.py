@@ -178,6 +178,7 @@ class DenseFusion(Refiner):
             raise NotImplementedError("'only_estimator' mode requested")
 
         my_r, my_t, _ = hypothesis
+        my_r = np.concatenate(([my_r[3]], my_r[:3]))  # to w, x, y, z
         _, _, _, emb, cloud = self.forward(rgb, depth, intrinsics, roi, mask, class_id)
 
         index = torch.LongTensor([class_id - 1])

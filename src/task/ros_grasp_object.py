@@ -2,7 +2,7 @@ import numpy as np
 import rospy
 import ros_numpy
 import actionlib
-# import tf
+import tf
 
 import cv2
 import scipy.spatial.transform as scit
@@ -11,7 +11,8 @@ import message_filters
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 from sensor_msgs.msg import Image
 from std_srvs.srv import Empty, EmptyResponse
-from object_detector_msgs.srv import detectron2_service_server, estimate_poses, refine_poses
+from object_detector_msgs.msg import PoseWithConfidence
+from object_detector_msgs.srv import detectron2_service_server, estimate_poses, refine_poses, get_poses, get_posesResponse
 #from grasping_pipeline.msg import ExecuteGraspAction, ExecuteGraspGoal
 #from sasha_handover.msg import HandoverAction, HandoverGoal
 
@@ -69,21 +70,26 @@ class Grasper:
         self.pub_segmentation = rospy.Publisher("/hsr_grasping/segmentation", Image)
         # self.pub_initial = rospy.Publisher("/hsr_grasping/initial_poses", Image)
         # self.pub_refined = rospy.Publisher("/hsr_grasping/refined_poses", Image)
-        # self.pub_poses = tf.TransformBroadcaster()
+        self.pub_poses = tf.TransformBroadcaster()
+        self.current_poses = []
 
     def rgbd_callback(self, rgb, depth):
         # print("callback...")
         if not self.working:
             # print("   set images")
             self.rgb, self.depth = rgb, depth
+            for pose in self.current_poses:
+               self.tf_pose(pose, "")
 
     def grasp(self, req):
+
+	response = get_posesResponse()
 
         # === check if we have an image ===
 
         if self.rgb is None or self.depth is None:
             print("no images available")
-            return EmptyResponse()
+            return response
 
         # === run pipeline ===
 
@@ -91,13 +97,16 @@ class Grasper:
 
         self.renderer.create_egl_context()  # TODO needed?
 
+        self.current_poses = []
+
         # detect all instances in image
         print("requesting detection...")
         detections = detect(self.rgb)
         print("   received detection.")
         if detections is None or len(detections) == 0:
             print("nothing detected")
-            return EmptyResponse()
+            self.working = False
+            return response
         self.vis_detect(detections)
 
         # for each instance...
@@ -129,7 +138,7 @@ class Grasper:
 
             # reject by pose confidence
             print(",".join(["%0.3f" % pose.confidence for pose in instance_poses]))
-            instance_poses = [pose for pose in instance_poses if pose.confidence > 0.1]
+            instance_poses = [pose for pose in instance_poses if pose.confidence > 0.01]
             # add to set of poses of detected instances
             if len(instance_poses) > 0:
                 poses += instance_poses
@@ -143,10 +152,13 @@ class Grasper:
         if len(confidences) > 0:
             best_hypothesis = np.argmax(confidences)
             best_pose = poses[best_hypothesis]
-            self.vis_pose(best_pose)
+            self.vis_pose(poses)#best_pose)
+
+            self.current_poses = poses
         else:
             print("no valid poses")
-            return EmptyResponse()
+            self.working = False
+            return response
 
         # === annotate grasp ===
 
@@ -208,7 +220,10 @@ class Grasper:
         #     print("nothing left to grasp (or rejected)")
 
         self.working = False
-        return EmptyResponse()
+        #return EmptyResponse()
+
+        response.poses = poses
+        return response
 
     def vis_detect(self, detections):
         width, height = self.rgb.width, self.rgb.height
@@ -239,25 +254,31 @@ class Grasper:
         ros_vis_segmentation = ros_numpy.msgify(Image, vis_segmentation, encoding="rgb8")
         self.pub_segmentation.publish(ros_vis_segmentation)
 
-    def vis_pose(self, pose):
+    def vis_pose(self, poses):
         rgb = ros_numpy.numpify(self.rgb)
         intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
                                0.0, 538.085452058436, 233.0483557773859,
                                0.0, 0.0, 1.0]).reshape(3, 3)
 
-        name = pose.name
-        obj_id = -1
-        for idx, obj_name in self.dataset.obj_names.items():
-            if obj_name == name:
-                obj_id = idx + 1
-                break
-        assert obj_id > 0  # should start from 1
+        obj_ids = []
+        obj_trafos = []
+        for pose in poses:
+           name = pose.name
+           obj_id = -1
+           for idx, obj_name in self.dataset.obj_names.items():
+               if obj_name == name:
+                   obj_id = idx + 1
+                   break
+           assert obj_id > 0  # should start from 1
+           obj_ids.append(obj_id)
 
-        obj_ids = [obj_id]  # TODO expand to a list of poses
-        T_obj = np.matrix(np.eye(4))
-        T_obj[:3, :3] = scit.Rotation.from_quat(ros_numpy.numpify(pose.pose.orientation)).as_dcm()
-        T_obj[:3, 3] = ros_numpy.numpify(pose.pose.position).reshape(3, 1)
-        obj_trafos = [T_obj]
+        #obj_ids = [obj_id]  # TODO expand to a list of poses
+           T_obj = np.matrix(np.eye(4))
+           T_obj[:3, :3] = scit.Rotation.from_quat(ros_numpy.numpify(pose.pose.orientation)).as_dcm()
+           T_obj[:3, 3] = ros_numpy.numpify(pose.pose.position).reshape(3, 1)
+           obj_trafos.append(T_obj)
+
+        #obj_trafos = [T_obj]
         rendered = self.renderer.render(obj_ids, obj_trafos,
                                         np.matrix(np.eye(4)), intrinsics,
                                         mode='color+depth+seg')
@@ -278,23 +299,23 @@ class Grasper:
 
         vis_pose = np.uint8(vis_pose * 255)
 
-        import matplotlib.pyplot as plt
+#        import matplotlib.pyplot as plt
 
-        plt.subplot(1, 3, 1)
-        plt.imshow(rgb)
-        plt.subplot(1, 3, 2)
-        plt.imshow(rendered[0])
-        plt.subplot(1, 3, 3)
-        plt.imshow(vis_pose)
-        plt.show()
+#        plt.subplot(1, 3, 1)
+#        plt.imshow(rgb)
+#        plt.subplot(1, 3, 2)
+#        plt.imshow(rendered[0])
+#        plt.subplot(1, 3, 3)
+#        plt.imshow(vis_pose)
+#        plt.show()
         # TODO visualize detected plane
 
         ros_vis_initial = ros_numpy.msgify(Image, vis_pose, encoding="rgb8")
         self.pub_segmentation.publish(ros_vis_initial)
 
-    # def tf_pose(self, pose, suffix):
-    #     self.pub_poses.sendTransform(pose.pose.position, pose.pose.orientation, rospy.Time.now(), pose.name + suffix,
-    #                                  self.rgb.header.frame_id)
+    def tf_pose(self, pose, suffix):
+        self.pub_poses.sendTransform([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z], [pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z, pose.pose.orientation.w], rospy.Time.now(), pose.name + suffix,
+                                     self.rgb.header.frame_id)
 
 
 if __name__ == "__main__":
@@ -306,7 +327,7 @@ if __name__ == "__main__":
     rgbd = message_filters.ApproximateTimeSynchronizer([sub_rgb, sub_depth], 10, 0.3)
     rgbd.registerCallback(grasper.rgbd_callback)
 
-    s = rospy.Service("grasp_object", Empty, grasper.grasp)
-    print("Object grasping ready.")
+    s = rospy.Service("get_poses", get_poses, grasper.grasp)
+    print("Get poses ready.")
 
     rospy.spin()
