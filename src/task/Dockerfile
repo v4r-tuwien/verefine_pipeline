@@ -43,7 +43,7 @@ ENV ROS_DISTRO kinetic
 RUN apt-get install -y \
   ros-kinetic-ros-base=1.3.2-0*
 
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
      python-catkin-tools \
      ros-kinetic-tf \
      && rm -rf /var/lib/apt/lists/*
