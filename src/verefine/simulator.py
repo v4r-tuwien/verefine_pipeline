@@ -89,6 +89,10 @@ class Simulator:
                         print("let pybullet compute collider")
                         collider_path = model_path
 
+                    # TODO fix for APC
+                    if "expo_dry" in collider_path:
+                        collider_path = collider_path.replace(".obj", "_simple.obj")
+
                     # use adapted sizes if available
                     meshScale = self.dataset.obj_scales[i_model - 1] if hasattr(self.dataset, 'obj_scales')\
                         else self.dataset.mesh_scale
@@ -123,14 +127,14 @@ class Simulator:
             for i_model, collision_shape in zip(i_models, collision_shapes):
                 base_mass = self.dataset.obj_masses[i_model - 1]
 
-                model = pybullet.createMultiBody(baseMass=base_mass,
-                                                 # [kg]; 0... static -> only add mass when active
-                                                 baseVisualShapeIndex=-1,
-                                                 baseCollisionShapeIndex=collision_shape,
-                                                 basePosition=[i_model * 0.5, 0, 0],
-                                                 baseOrientation=[1, 0, 0, 0],
-                                                 baseInertialFramePosition=[0, 0, self.dataset.obj_coms[i_model - 1]])
-
+                # model = pybullet.createMultiBody(baseMass=base_mass,
+                #                                  # [kg]; 0... static -> only add mass when active
+                #                                  baseVisualShapeIndex=-1,
+                #                                  baseCollisionShapeIndex=collision_shape,
+                #                                  basePosition=[i_model * 0.5, 0, 0],
+                #                                  baseOrientation=[1, 0, 0, 0],
+                #                                  baseInertialFramePosition=[0, 0, self.dataset.obj_coms[i_model - 1]])
+                model = self.models["%0.2d" % i_model]
                 self.models["%0.2d(%0.2d)" % (i_model, hi)] = model
 
     def initialize_frame(self, extrinsics, topview=False, focus=None):
@@ -231,7 +235,7 @@ class Simulator:
         return trafos
 
     # TODO 2 substeps faster, 4 more precise -- evaluate performance difference
-    def simulate_no_render(self, obj_str, delta, steps, solver_iterations=10, sub_steps=4, fix_others=False):
+    def simulate_no_render(self, obj_str, delta, steps, solver_iterations=10, sub_steps=4, fix_others=True):
         pybullet.resetBasePositionAndOrientation(self.planeId, [0,0,0], [0,0,0,1], self.world)
         pybullet.setCollisionFilterGroupMask(self.planeId, -1, 1, 1)
 
@@ -247,7 +251,7 @@ class Simulator:
                 if other_str not in self.objects_to_use:
                     continue
                 if other_str != obj_str:
-                    pybullet.changeDynamics(self.models[other_str], -1, mass=0)
+                    pybullet.changeDynamics(self.models[other_str], -1, mass=0.0)  # TODO should be 0 -- change "fix others" to get same result
                 else:
                     pybullet.changeDynamics(self.models[other_str], -1, mass=self.dataset.obj_masses[int(obj_str[:2])-1])
         elapsed_setup = time.time() - st

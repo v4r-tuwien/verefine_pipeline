@@ -36,6 +36,7 @@ from PIL import Image
 _vertex_code = """
 uniform mat4 u_mv;
 uniform mat4 u_mvp;
+uniform mat4 u_norm;
 
 attribute vec3 a_position;
 attribute vec3 a_normal;
@@ -45,6 +46,7 @@ attribute vec2 a_texcoord;
 varying vec3 v_color;
 varying vec2 v_texcoord;
 varying float v_eye_depth;
+varying vec3 v_eye_normal;
 
 void main() {
     gl_Position = u_mvp * vec4(a_position, 1.0);
@@ -55,6 +57,8 @@ void main() {
     // OpenGL Z axis goes out of the screen, so depths are negative
     vec3 v_eye_pos = (u_mv * vec4(a_position, 1.0)).xyz; // Vertex position in eye coords.
     v_eye_depth = -v_eye_pos.z;
+
+    v_eye_normal = normalize((u_norm * vec4(a_normal, 0.0)).xyz);
 }
 """
 
@@ -69,6 +73,7 @@ uniform int u_obj_id;
 varying vec3 v_color;
 varying vec2 v_texcoord;
 varying float v_eye_depth;
+varying vec3 v_eye_normal;
 
 void main() {
     if(u_mode == 0) {
@@ -85,6 +90,10 @@ void main() {
     }
     else if(u_mode == 2) {
         gl_FragColor = vec4(v_eye_depth, u_obj_id, 0.0, 1.0);
+    }
+    else if(u_mode == 3) {
+        vec3 eye_normal = normalize(v_eye_normal);
+        gl_FragColor = vec4(eye_normal.y, eye_normal.z, eye_normal.x, v_eye_depth);
     }
     else {  // cost in shader       
         /*if (u_obj_id > 0 && ((1 << int(texture2D(u_texture, v_texcoord).y) & u_obj_id) == 0)) {
@@ -172,7 +181,7 @@ class Model:
 
         attributes = reader.GetAttrib()
         pts = np.array(attributes.vertices)
-        normals = np.array(attributes.normals)
+        # normals = np.array(attributes.normals)
         colors = np.array(attributes.colors)
         texture_uv = np.array(attributes.texcoords)
 
@@ -183,7 +192,7 @@ class Model:
         # reshape to vertex_count
         vertex_count = int(pts.shape[0]/3)
         pts = pts.reshape(vertex_count, 3)
-        normals = normals.reshape(vertex_count, 3)
+        # normals = normals.reshape(vertex_count, 3)
         colors = colors.reshape(vertex_count, 3)
         uv_count = int(texture_uv.shape[0] / 2)
         texture_uv = texture_uv.reshape(uv_count, 2)
@@ -191,7 +200,20 @@ class Model:
         # blow up pts, colors and normals to indices size # TODO ideally we just want uv_count vertices; adapt faces accordingly
         pts = pts[indices.reshape(index_count, 3)[:, 0]]
         colors = colors[indices.reshape(index_count, 3)[:, 0]]
-        normals = normals[indices.reshape(index_count, 3)[:, 1]]
+        # normals = normals[indices.reshape(index_count, 3)[:, 1]]
+
+        # recompute normals
+        def normalize(v):
+            return v / np.linalg.norm(v)
+
+        normals = []
+        for face_pts in pts.reshape(int(pts.shape[0] / 3), 3, 3):
+            p0, p1, p2 = face_pts
+            n = normalize(np.cross(normalize(p2 - p0), normalize(p1 - p0)))
+            normals += [n, n, n]
+        normals = np.array(normals)
+
+        normals = normals / np.linalg.norm(normals, axis=1).reshape(normals.shape[0], 1)
         texture_uv = texture_uv[indices.reshape(index_count, 3)[:, 2]]
 
         faces = np.array(list(range(index_count)), dtype=np.uint32).reshape(index_count)
@@ -255,7 +277,7 @@ class Plane(Model):
         normals = np.array([[0, 0, 1]]*4)
         colors = np.array([[128, 128, 128]]*4)
         faces = np.array([[0, 3, 2], [0, 2, 1]])
-        self.from_arrays(0, pts, normals, colors, faces)
+        self.from_arrays(0, pts, normals, colors, faces, texture=np.zeros((1, 1), np.uint8).view(gloo.Texture2D))
         # self.mat_model = np.eye(4, dtype=np.float32)  # From model space to world space
 
 
@@ -452,7 +474,7 @@ class Renderer:
 
     def _draw(self, model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id):
 
-        assert mode in ['color', 'depth', 'depth+seg', 'cost']
+        assert mode in ['color', 'depth', 'depth+seg', 'depth+normal', 'cost']
 
         self.fbo.activate()
 
@@ -470,6 +492,11 @@ class Renderer:
             dims = 3
             format = gl.GL_RGB
             self.program['u_mode'] = 0
+        elif mode == 'depth+normal':
+            dims = 4
+            format = gl.GL_RGBA
+            self.program['u_mode'] = 3
+
 
         # self.program['u_observation'] = self.observation
 
@@ -486,6 +513,7 @@ class Renderer:
 
             self.program['u_mv'] = self._compute_model_view(mat_model, mat_view)
             self.program['u_mvp'] = self._compute_model_view_proj(mat_model, mat_view, mat_proj)
+            self.program['u_norm'] = self._compute_model_view(mat_model, mat_view)
             self.program['u_obj_id'] = model_id
 
             try:
@@ -685,7 +713,7 @@ class Renderer:
             buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
             if mode == 'cost':
                 buffer, cost = buffer
-            depth = buffer[:, :, 0].astype(np.float32)
+            depth = buffer[:, :, 0]#.astype(np.float32)
         else:
             if 'color' in mode:
                 buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, 'color', bbox, cost_id)
@@ -694,8 +722,14 @@ class Renderer:
                 buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
                 if mode == 'cost':
                     buffer, cost = buffer
-                depth = buffer[:, :, 0].astype(np.float32)
+                depth = buffer[:, :, 0]#.astype(np.float32)
                 seg = buffer[:, :, 1].astype(np.uint8)
+            if 'depth+normal' in mode:
+                buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
+                # t_start = time.time()
+                normal = buffer[:, :, :3]#.astype(np.float32)
+                depth = buffer[:, :, 3]#.astype(np.float32)
+                # print(time.time()-t_start)
 
         # app.run(framecount=0)  # The on_draw function is called framecount+1 times
 
@@ -714,6 +748,8 @@ class Renderer:
             return rgb, depth, seg
         elif mode == 'depth+seg':
             return None, depth, seg
+        elif mode == 'depth+normal':
+            return None, depth, None, normal
 
 # import trimesh
 # import pyrender

@@ -140,3 +140,58 @@ class YcbvDataset:
             [1.00, 1.00, 1.00],  # 19: "052_extra_large_clamp",
             [1.00, 1.00, 0.94],  # 20: "061_foam_brick"
         ]
+
+# import open3d as o3d
+import numpy as np
+
+
+class ExApcDataset:
+    """
+
+    TODO
+
+    """
+
+    def __init__(self, base_path):
+        self.num_objects = 11
+        self.objlist = list(range(12))
+
+        self.obj_masses = [1] * 11  # TODO
+        self.obj_masses = [float(mass) for mass in self.obj_masses]
+        self.obj_names = {
+            -1: "table",
+            0: "crayola_24_ct",
+            1: "expo_dry_erase_board_eraser",
+            2: "folgers_classic_roast_coffee",
+            3: "scotch_duct_tape",
+            4: "up_glucose_bottle",
+            5: "laugh_out_loud_joke_book",
+            6: "soft_white_lightbulb",
+            7: "kleenex_tissue_box",
+            8: "dove_beauty_bar",
+            9: "elmers_washable_no_run_school_glue",
+            10: "rawlings_baseball"
+        }
+        self.obj_coms = [0.0] * 11  # TODO
+        self.obj_coms = [com * 0.5 for com in self.obj_coms]
+
+        self.base_path = base_path
+        obj_names = list(self.obj_names.values())[:-1]  # key -1 is last
+        self.model_paths = [self.base_path + "models/%s/%s.obj" % (obj_name, obj_name) for obj_name in obj_names]
+        self.mesh_scale = [1.0] * 3  # TODO
+        self.obj_scales = [[1.0, 1.0, 1.0]] * 11  # TODO
+
+        self.pcd = []
+        for obj_name in list(self.obj_names.values())[:-1]:
+            with open(self.base_path + "models/%s/points.xyz" % obj_name,
+                      'r') as file:
+                pts = file.readlines()
+
+            cld = []
+            for pt in pts:
+                pt = pt.split(" ")
+                pt = [float(v.replace("\n", "")) for v in pt]
+                cld.append(pt)
+
+            self.pcd.append(np.array(cld))
+
