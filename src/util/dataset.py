@@ -141,7 +141,7 @@ class YcbvDataset:
             [1.00, 1.00, 0.94],  # 20: "061_foam_brick"
         ]
 
-# import open3d as o3d
+import open3d as o3d
 import numpy as np
 
 
@@ -183,15 +183,6 @@ class ExApcDataset:
 
         self.pcd = []
         for obj_name in list(self.obj_names.values())[:-1]:
-            with open(self.base_path + "models/%s/points.xyz" % obj_name,
-                      'r') as file:
-                pts = file.readlines()
-
-            cld = []
-            for pt in pts:
-                pt = pt.split(" ")
-                pt = [float(v.replace("\n", "")) for v in pt]
-                cld.append(pt)
-
-            self.pcd.append(np.array(cld))
+            pcd = o3d.read_point_cloud("/home/dominik/experiments/PhysimGlobalPose/src/original_models/pcl/%s.pcd" % obj_name)
+            self.pcd.append(np.array(pcd.points))
 

@@ -42,12 +42,12 @@ TODO
 
 # settings
 PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline/"#_fcnn-pcs-lcp/"
-PATH_APC_old = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline/"
+PATH_APC_old = "/home/dominik/experiments/PhysimGlobalPose/src/dataset/"
 
-POOL = "super4pcs"  # "allPose" for Super4PCS(?) ordered by LCP, "clusterPose" for cluster hypotheses (exactly 25), "super4pcs" for Super4PCS (best LCP)
-MODE = "BASE"  # "BASE", "PIR", "BAB", "SV", "VF"
+POOL = "clusterPose"  # "allPose" for Super4PCS(?) ordered by LCP, "clusterPose" for cluster hypotheses (exactly 25), "super4pcs" for Super4PCS (best LCP)
+MODE = "BAB"  # "BASE", "PIR", "BAB", "SV", "VF"
 EST_MODE = "PCS"
-REF_MODE = "" #"ICP"  # TODO ICP not the same
+REF_MODE = "ICP"  # TODO ICP not the same
 
 obj_names = {  # TODO start from 0 or 1?
     "crayola_24_ct": 1,
@@ -92,7 +92,7 @@ if __name__ == "__main__":
 
     # loop over scenes...
     objects = []
-    scenes = list(range(1, 43))
+    scenes = list(range(1, 31))
     for scene in scenes:
         print("scene %i..." % scene)
 
@@ -194,6 +194,12 @@ if __name__ == "__main__":
             obj_q = obj_info['pose'][3:]  # wxyz
             obj_q = obj_q[1:] + [obj_q[0]]  # xyzw
             obj_gt_T[:3, :3] = Rotation.from_quat(obj_q).as_dcm()
+
+            # # to old format
+            # with open(PATH_APC_old + "scene-%0.4d/gt_pose_%s.txt" % (scene, obj_name), 'w') as file:
+            #     file.write(str(obj_gt_T[:3, :]).replace("[", "").replace("]", "").replace("\n", "") + "\n")
+            # continue
+
             # obj_gt_T[:3, 3] = np.matrix(obj_info['pose'][:3]).T - obj_gt_T[:3, :3]*np.matrix(gt_info['rest_surface']['surface_pose'][:3]).T
             world_to_cam = camera_extrinsics.copy()
             world_to_cam[:3, :3] = world_to_cam[:3, :3].T
@@ -223,7 +229,7 @@ if __name__ == "__main__":
                 obj_hypotheses_scores = [obj_hypotheses_scores[i] for i in score_order]
                 obj_hypotheses = [obj_hypotheses[i] for i in score_order]
             else:
-                obj_hypotheses = [obj_hypotheses[1]]  # TODO 0 is just super4pcs, 1 is with Mitash' TrICP
+                obj_hypotheses = [obj_hypotheses[0]]  # TODO 0 is just super4pcs, 1 is with Mitash' TrICP
                 obj_hypotheses_scores = [1.0]
 
             # mask + roi
@@ -238,15 +244,17 @@ if __name__ == "__main__":
 
             obj_depth = scene_depth.copy()
             obj_depth[obj_mask == 0] = 0
-            # downsample and mask observed depth
-            # depth_pcd = ref.depth_to_cloud(scene_depth, camera_intrinsics, obj_mask)
-            # import open3d as o3d
-            #
-            # pcd, pcd_down = o3d.PointCloud(), o3d.PointCloud()
-            # pcd.points = o3d.Vector3dVector(depth_pcd / 1000)
-            # pcd_down = o3d.voxel_down_sample(pcd, voxel_size=0.005)
-            # scene_depth_down = np.array(pcd_down.points)
+
             scene_depth_down = None
+            # downsample and mask observed depth
+            depth_pcd = ref.depth_to_cloud(scene_depth, camera_intrinsics, obj_mask)
+            import open3d as o3d
+
+            pcd, pcd_down = o3d.PointCloud(), o3d.PointCloud()
+            pcd.points = o3d.Vector3dVector(depth_pcd / 1000)
+            pcd_down = o3d.voxel_down_sample(pcd, voxel_size=0.005)
+            scene_depth_down = np.array(pcd_down.points)
+
 
             # hypotheses
             new_hypotheses = []
@@ -430,34 +438,36 @@ if __name__ == "__main__":
 
         # print("   refinement iterations = %i" % ref.ref_count)  # TODO
         #
-        # # # --- vis
-        # vis = rgb.copy()
-        # rgb_ren = []
-        # for hypothesis in final_hypotheses:
-        #     rendered = hypothesis.render(observation, 'color')
-        #     rgb_ren.append(rendered[0])
-        #     vis[rendered[0] != 0] = vis[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0] * 0.7
-        # vis2 = rgb.copy()
-        # for obj_hypotheses in hypotheses:
-        #     rendered = obj_hypotheses[0].render(observation, 'color')
-        #     vis2[rendered[0] != 0] = vis2[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0] * 0.7
-        #
-        # def debug_draw():
-        #     plt.subplot(1, 2, 2)
-        #     plt.imshow(vis)
-        #     plt.subplot(1, 2, 1)
-        #     plt.imshow(vis2)
-        # drawnow(debug_draw)
-        # plt.pause(5.0)
+        # # --- vis
+        vis = np.dstack((depth, depth, depth))/1000#
+        vis = rgb.copy()
+        rgb_ren = []
+        for hypothesis in final_hypotheses:
+            rendered = hypothesis.render(observation, 'color')
+            rgb_ren.append(rendered[0])
+            # vis[rendered[0] != 0] = vis[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0]/255 * 0.7
+            vis[rendered[0] != 0] = vis[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0] * 0.7
+        vis2 = rgb.copy()
+        for obj_hypotheses in hypotheses:
+            rendered = obj_hypotheses[0].render(observation, 'color')
+            vis2[rendered[0] != 0] = vis2[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0] * 0.7
+
+        def debug_draw():
+            plt.subplot(1, 2, 2)
+            plt.imshow(vis)
+            plt.subplot(1, 2, 1)
+            plt.imshow(vis2)
+        drawnow(debug_draw)
+        plt.pause(0.05)
 
         print("   ---")
         print("   ~ icp/call=%0.1fms" % (np.mean(TrimmedIcp.icp_durations) * 1000))
-        if MODE not in ["BASE"]:
+        if MODE not in ["BASE", "PIR"]:
             print("   ~ rendering/call=%0.1fms" % (np.mean(np.sum(renderer.runtimes, axis=1)) * 1000))
             print("   ~ cost/call=%0.1fms" % (np.mean(Verefine.cost_durations) * 1000))
         print("   ---")
         print("   ~ icp/frame=%ims" % (np.sum(TrimmedIcp.icp_durations) * 1000))
-        if MODE not in ["BASE"]:
+        if MODE not in ["BASE", "PIR"]:
             print("   ~ rendering/frame=%ims" % (np.sum(np.sum(renderer.runtimes, axis=1)) * 1000))
             print("   ~ cost/frame=%ims" % (np.sum(Verefine.cost_durations) * 1000))
 
@@ -465,6 +475,7 @@ if __name__ == "__main__":
         renderer.runtimes.clear()
         Verefine.cost_durations.clear()
 
+    print("\n\n")
     print("err t [cm] = %0.1f" % (np.mean(errors_translation)/10))
     print("err r [deg] = %0.1f" % np.mean(errors_rotation))
     print("------")

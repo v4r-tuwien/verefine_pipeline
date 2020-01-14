@@ -161,7 +161,7 @@ class TrimmedIcp(Refiner):
         self.width, self.height = renderer.width, renderer.height
         self.umap = np.array([[j for _ in range(self.width)] for j in range(self.height)])
         self.vmap = np.array([[i for i in range(self.width)] for _ in range(self.height)])
-        self.num_samples = 500  # TODO how many samples required? --> 500 good on exAPC
+        self.num_samples = 100  # TODO how many samples required? --> 500 good on exAPC
 
     def depth_to_cloud(self, depth, intrinsics, label=None, roi=None):
 
@@ -204,6 +204,11 @@ class TrimmedIcp(Refiner):
     def refine(self, rgb, depth, intrinsics, roi, mask, obj_id,
                estimate, iterations, cloud_obs=None, cloud_ren=None):
 
+        q, t, c = estimate
+        obj_T = np.matrix(np.eye(4))
+        obj_T[:3, :3] = Rotation.from_quat(q).as_dcm()
+        obj_T[:3, 3] = t.reshape(3, 1)
+
         for iteration in range(iterations):
             TrimmedIcp.ref_count += 1
             st = time.time()
@@ -217,19 +222,14 @@ class TrimmedIcp(Refiner):
             # create estimated point cloud (TODO could just load model point cloud once and transform it here)
             obj_id = self.renderer.dataset.objlist.index(obj_id)
 
-            q, t, c = estimate
-            obj_T = np.matrix(np.eye(4))
-            obj_T[:3, :3] = Rotation.from_quat(q).as_dcm()
-            obj_T[:3, 3] = t.reshape(3, 1)
+            # rendered = self.renderer.render([obj_id], [obj_T],
+            #                            np.matrix(np.eye(4)), intrinsics,
+            #                            mode='depth')
+            # cloud_ren = self.depth_to_cloud(rendered[1], intrinsics, rendered[1] > 0)
 
-            rendered = self.renderer.render([obj_id], [obj_T],
-                                       np.matrix(np.eye(4)), intrinsics,
-                                       mode='depth')
-            cloud_ren = self.depth_to_cloud(rendered[1], intrinsics, rendered[1] > 0)
-
-            # cloud_ren = np.dot(self.dataset.pcd[obj_id-1], obj_T[:3, :3].T) + obj_T[:3, 3].T
-            # # if cloud_ren.shape[0] > self.num_samples:
-            # #     cloud_ren = cloud_ren[np.random.choice(list(range(cloud_ren.shape[0])), self.num_samples), :]
+            cloud_ren = np.dot(self.dataset.pcd[obj_id-1], obj_T[:3, :3].T) + obj_T[:3, 3].T
+            # if cloud_ren.shape[0] > 500:#self.num_samples:
+            #     cloud_ren = cloud_ren[np.random.choice(list(range(cloud_ren.shape[0])), self.num_samples), :]
 
             if cloud_ren.shape[0] == 0:
                 TrimmedIcp.icp_durations.append(time.time() - st)
@@ -261,24 +261,26 @@ class TrimmedIcp(Refiner):
             # T = reg_p2p.transformation
             # st = time.time()
             # c) using own python bindings to pcl
-            T = icp.tricp(cloud_ren, cloud_obs, 0.9)
+            T = icp.tricp(cloud_obs, cloud_ren, 0.9)
             # TODO icp.icp (would this require normals? then we'd have to adapt the cpp code)
             # print("%0.1fms" % ((time.time() - st) * 1000))
             # -- apply trafo
-            new_obj_T = np.matrix(T) * obj_T
+            obj_T = np.matrix(T).I * obj_T
 
             # # TODO debug
-            # new_rendered = self.renderer.render([obj_id], [new_obj_T],
+            # new_rendered = self.renderer.render([obj_id], [obj_T],
             #                                     np.matrix(np.eye(4)), intrinsics,
             #                                     mode='depth')
             # import matplotlib.pyplot as plt
             # plt.subplot(1, 3, 1)
-            # plt.imshow(mask)
+            # plt.imshow(depth, vmin=0, vmax=1000)
             # plt.subplot(1, 3, 2)
-            # plt.imshow(rendered[1])
+            # plt.imshow(rendered[1], vmin=0, vmax=1.0)
+            # plt.title("%0.3f" % (np.abs(depth/1000 - rendered[1])).mean())
             # plt.subplot(1, 3, 3)
-            # plt.imshow(new_rendered[1])
+            # plt.imshow(new_rendered[1], vmin=0, vmax=1.0)
+            # plt.title("%0.3f" % (np.abs(depth / 1000 - new_rendered[1])).mean())
             # plt.show()
 
             TrimmedIcp.icp_durations.append(time.time() - st)
-        return Rotation.from_dcm(new_obj_T[:3, :3]).as_quat(), np.array(new_obj_T[:3, 3]).T[0], c
+        return Rotation.from_dcm(obj_T[:3, :3]).as_quat(), np.array(obj_T[:3, 3]).T[0], c
