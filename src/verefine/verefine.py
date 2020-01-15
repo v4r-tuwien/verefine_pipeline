@@ -2,6 +2,11 @@
 # Vision for Robotics Group, Automation and Control Institute (ACIN)
 # TU Wien, Vienna
 
+import matplotlib
+matplotlib.use("Qt5Agg")
+import matplotlib.pyplot as plt
+from drawnow import drawnow
+
 import numpy as np
 from scipy.spatial.transform.rotation import Rotation
 
@@ -53,12 +58,13 @@ OBSERVATION = None
 cost_durations = []
 
 
-def fit(observation, rendered, mask):
+def fit(observation, rendered, unexplained):
     st = time.time()
     depth_obs = observation['depth']
     depth_ren = rendered[1] * 1000  # in mm TODO or do this in renderer?
 
-    mask = np.logical_and(mask, depth_ren>0)#np.logical_and(mask, np.logical_and(depth_ren > 0, depth_obs > 0))# TODO or just
+    # mask = np.logical_and(mask, depth_ren>0)#np.logical_and(mask, np.logical_and(depth_ren > 0, depth_obs > 0))# TODO or just
+    mask = depth_ren>0#np.logical_and(unexplained, depth_ren>0)
     if np.count_nonzero(mask) == 0:  # no valid depth values
         cost_durations.append(time.time() - st)
         return 0
@@ -93,7 +99,11 @@ def fit(observation, rendered, mask):
     # fit = visibility_ratio * aldoma_fit
     # fit = visibility_ratio * ((1 - delta)*0.7 + cos_fit*0.3)
     # fit = visibility_ratio * (1 - delta) * cos_fit
-    fit = visibility_ratio * (1 - delta)
+    if unexplained is None or float((depth_mask>0).sum()) == 0:
+        overlap = 0
+    else:
+        overlap = float(np.logical_and(unexplained==0, depth_mask>0).sum()) / float((depth_mask>0).sum())#float(np.logical_or(unexplained==0, depth_ren>0).sum())
+    fit = visibility_ratio * (1 - delta) * (1-overlap)
     if np.isnan(fit):  # invisible object
         cost_durations.append(time.time() - st)
         return 0
@@ -154,7 +164,7 @@ class Hypothesis:
 
         return rendered
 
-    def fit(self, observation, fixed=[]):
+    def fit(self, observation, unexplained=None):
         """
         TODO mention PoseRBPF
         :param observation:
@@ -164,11 +174,11 @@ class Hypothesis:
 
         # a) render depth, compute score on CPU
         rendered = self.render(observation, mode='depth')#+normal')
-        unexplained = np.ones_like(self.mask)# TODO self.mask
-        for hs in fixed:
-            h_mask = hs[0].render(observation, mode='depth+seg')[2]
-            unexplained[h_mask > 0] = 0
-        score = fit(observation, rendered, mask=unexplained)
+        # unexplained = np.ones_like(self.mask)# TODO self.mask
+        # for hs in fixed:
+        #     h_mask = hs[0].render(observation, mode='depth+seg')[2]
+        #     unexplained[h_mask > 0] = 0
+        score = fit(observation, rendered, unexplained)
 
         # b) render depth, compute score on GPU  TODO has a bug when object is too far off
         # _, score = self.render(observation, "cost", fixed)
@@ -232,6 +242,7 @@ class PhysIR:
 
             # just use the rotation -- both are in camera system, so do not need to change the offset
             hypothesis.transformation[:3, :3] = T_phys[:3, :3]  # only R
+            # hypothesis.transformation = T_phys.copy()
             # hypothesis.confidence = disp_t * disp_q
 
             physics_hypotheses.append(hypothesis.duplicate())
@@ -288,30 +299,36 @@ class BudgetAllocationBandit:
     TODO
     """
 
-    def __init__(self, pir, observation, hypotheses, fixed=[]):
+    def __init__(self, pir, observation, hypotheses, unexplained=None):
         self.pir = pir
         self.observation = observation
 
         self.pool = [[h] for h in hypotheses + [None] * len(hypotheses)]  # for the phys hypotheses
-        self.max_iter = 4 * len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
+        self.max_iter = 2 * len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
 
 
         # # TODO debug hypotheses and fit computation
         # import matplotlib.pyplot as plt
-        # fits = []
-        # for row in range(5):
-        #     for col in range(5):
-        #         i = col + (row * 5)
-        #         fits.append(hypotheses[i].fit(observation, fixed=fixed))
-        # best_fits = np.argsort(fits)[::-1]
-        # for row in range(5):
-        #     for col in range(5):
-        #         i = col + (row * 5)
-        #         j = best_fits[i]
-        #         plt.subplot(5, 5, i + 1)
-        #         plt.imshow(observation['depth'] - hypotheses[j].render(observation, 'depth')[1] * 1000)
-        #         plt.title("hi=%i, fit=%0.3f" % (j, hypotheses[j].fit(observation, fixed=fixed)))
-        # plt.show()
+        # def debug():
+        #     fits = []
+        #     for row in range(5):
+        #         for col in range(5):
+        #             i = col + (row * 5)
+        #             fits.append(hypotheses[i].fit(observation, unexplained=unexplained))
+        #     best_fits = np.argsort(fits)[::-1]
+        #     for row in range(5):
+        #         for col in range(5):
+        #             i = col + (row * 5)
+        #             j = best_fits[i]
+        #             plt.subplot(5, 5, i + 1)
+        #             vis = observation['depth'] - hypotheses[j].render(observation, 'depth')[1] * 1000
+        #             vis[unexplained==0] = -1000
+        #             plt.imshow(vis)
+        #             plt.title("hi=%i, fit=%0.3f" % (j, hypotheses[j].fit(observation, unexplained=unexplained)))
+        # # plt.show()
+        # if int(hypotheses[0].model) == 1 and (unexplained==0).sum() > 0:
+        #     drawnow(debug)
+        #     plt.pause(5.0)
 
         # ---
         # INIT
@@ -323,7 +340,7 @@ class BudgetAllocationBandit:
         # self.pir.fixed = fixed
         for hi, h in enumerate(hypotheses):
             stability = 0.0#self.pir.simulate(h) * self.factor if self.factor > 0 else 0.0
-            self.fits[hi] = h.fit(observation, fixed=fixed) * (1.0 - self.factor) + stability
+            self.fits[hi] = h.fit(observation, unexplained=unexplained) * (1.0 - self.factor) + stability
         # self.pir.fixed = []
 
         self.plays = [1] * arms
@@ -359,11 +376,11 @@ class BudgetAllocationBandit:
 
             # REWARD  # TODO render fixed hypotheses as well? but cost only for object -- stimulate with fixed!
             stability = 0.0 #self.pir.simulate(child) * self.factor if self.factor > 0 else 0.0
-            reward = child.fit(self.observation, fixed=[]) * (1.0 - self.factor) + stability
+            reward = child.fit(self.observation, unexplained=unexplained) * (1.0 - self.factor) + stability
             child.confidence = reward
 
             stability_phys = 0.0#self.pir.simulate(physics_child) * self.factor if self.factor > 0 else 0.0
-            reward_phys = physics_child.fit(self.observation, fixed=[]) * (1.0 - self.factor) + stability_phys
+            reward_phys = physics_child.fit(self.observation, unexplained=unexplained) * (1.0 - self.factor) + stability_phys
             physics_child.confidence = reward_phys
 
             # BACKPROPAGATE
@@ -409,19 +426,26 @@ def verefine_solution(hypotheses_pool):
     """
     CLUSTER
     """
-    if ALL_OBJECTS:
-        hypotheses_pools, adjacencies = cluster(hypotheses_pool)
-        # print("  %i cluster(s)" % len(hypotheses_pools))
+    # if ALL_OBJECTS:
+    #     hypotheses_pools, adjacencies = cluster(hypotheses_pool)
+    #     # print("  %i cluster(s)" % len(hypotheses_pools))
+    #
+    #     # TODO debug -- all in one cluster
+    #     # hypotheses_pools = [hypotheses_pool]
+    # else:
+    #     # TODO debug -- this should yield same result as verfine_individual
+    #     hypotheses_pools = []
+    #     adjacencies = []
+    #     for obj_str, obj_hypotheses in hypotheses_pool.items():
+    #         hypotheses_pools.append({obj_str: obj_hypotheses})
+    #         adjacencies.append({})
 
-        # TODO debug -- all in one cluster
-        # hypotheses_pools = [hypotheses_pool]
-    else:
-        # TODO debug -- this should yield same result as verfine_individual
-        hypotheses_pools = []
-        adjacencies = []
-        for obj_str, obj_hypotheses in hypotheses_pool.items():
-            hypotheses_pools.append({obj_str: obj_hypotheses})
-            adjacencies.append({})
+    # TODO debug - no clustering
+    hypotheses_pools = [hypotheses_pool]
+    adjacencies = [dict()]
+    all_obj_strs = list(hypotheses_pool.keys())
+    for obj_str in all_obj_strs:
+        adjacencies[0][obj_str] = all_obj_strs
 
     """
     VEReFINE
@@ -493,7 +517,7 @@ def verefine_solution(hypotheses_pool):
 
         all_obj_strs = list(hypotheses_pool.keys())
         nobjects = len(hypotheses_pool.keys())
-        max_iterations = 20#int(min(MAX_MCTS_ITERATIONS_PER_OBJECT * nobjects * BUDGET_SCALE, 300))
+        max_iterations = 7#int(min(MAX_MCTS_ITERATIONS_PER_OBJECT * nobjects * BUDGET_SCALE, 300))
         if DEBUG_PLOT:
             print("   - #obj_initial = %i" % nobjects)
             print("   - verifine for %i iterations..." % (max_iterations))
@@ -700,7 +724,7 @@ class SceneVerificationNode:
         SIMULATOR.objects_to_use = []
         SIMULATOR.reset_objects()
         # TODO fix everything - just unfix the current hypothesis
-        unexplained = np.ones((480, 640), dtype=np.uint8)
+        unexplained = None#np.ones((480, 640), dtype=np.uint8)
         for current in descent_path:
 
             if current.refiner is None:
@@ -708,6 +732,9 @@ class SceneVerificationNode:
                 continue  # TODO then we remove this continue
 
             # === REFINER
+            # best_ri = np.argmax(np.hstack((current.refiner.fits[:25, :], current.refiner.fits[25:, :])), axis=1)
+            # hypotheses = [current.refiner.pool[hi + int(25*np.floor(ri/25))][ri%25] for hi, ri in enumerate(best_ri)]
+            # current.refiner = BudgetAllocationBandit(current.refiner.pir, current.refiner.observation, hypotheses, unexplained=unexplained)
             if REFINE_AT_ONCE:
                 current.refiner.refine_max(fixed=selected_hypotheses, unexplained=unexplained)  # TODO is this already covered by adding fix_hypothesis and unfix below?
             else:  # only one iteration
@@ -730,8 +757,24 @@ class SceneVerificationNode:
             # store for final solution
             selected_hypotheses.append([best_hypothesis])
 
-            selected_depth = best_hypothesis.render(OBSERVATION, 'depth')[1]
-            unexplained[selected_depth > 0] = 0
+            # selected_depth = best_hypothesis.render(OBSERVATION, 'depth')[1]
+            # unexplained[selected_depth > 0] = 0
+
+            # # TODO debug
+            # obj_ids = [RENDERER.dataset.objlist.index(int(obj_hs[0].id[:2])) for obj_hs in
+            #            selected_hypotheses]  # TODO do this conversion in renderer
+            # obj_trafos = [obj_hs[0].transformation for obj_hs in selected_hypotheses]
+            # rendered = RENDERER.render(obj_ids, obj_trafos,
+            #                            OBSERVATION['extrinsics'], OBSERVATION['intrinsics'],
+            #                            mode='color')
+
+            # def debug():
+            #     plt.subplot(1, 2, 1)
+            #     plt.imshow(rendered[0] / 255 * 0.7 + OBSERVATION['rgb'] / 255 * 0.3)
+            #     plt.subplot(1, 2, 2)
+            #     plt.imshow(unexplained)
+            # drawnow(debug)
+            # plt.pause(0.5)
         # unfix hypotheses
         # SIMULATOR.unfix()
 
@@ -760,6 +803,14 @@ class SceneVerificationNode:
         # --- add to already fixed hypotheses
         scene_hypotheses = selected_hypotheses + missing_hypotheses
 
+        # # TODO debug
+        # obj_ids = [RENDERER.dataset.objlist.index(int(obj_hs[0].id[:2])) for obj_hs in
+        #            selected_hypotheses]  # TODO do this conversion in renderer
+        # obj_trafos = [obj_hs[0].transformation for obj_hs in selected_hypotheses]
+        # selected_rgb = RENDERER.render(obj_ids, obj_trafos,
+        #                            OBSERVATION['extrinsics'], OBSERVATION['intrinsics'],
+        #                            mode='color')[0]
+
         # 3) render resulting scene and compute fitness
         obj_ids = [RENDERER.dataset.objlist.index(int(obj_hs[0].id[:2])) for obj_hs in scene_hypotheses]  # TODO do this conversion in renderer
         obj_trafos = [obj_hs[0].transformation for obj_hs in scene_hypotheses]
@@ -769,7 +820,17 @@ class SceneVerificationNode:
         rendered = RENDERER.render(obj_ids, obj_trafos,
                                    OBSERVATION['extrinsics'], OBSERVATION['intrinsics'],
                                    mode='depth+normal')
-        scene_reward = fit(OBSERVATION, rendered, mask=np.ones_like(rendered[1], dtype=np.uint8))
+        scene_reward = fit(OBSERVATION, rendered, unexplained=np.ones_like(rendered[1], dtype=np.uint8))
+
+        # def debug():
+        #     plt.subplot(1, 2, 1)
+        #     plt.imshow(selected_rgb/255*0.7 + OBSERVATION['rgb']/255*0.3)
+        #     plt.title(str(self) + " (%i plays)" % self.plays)
+        #     plt.subplot(1, 2, 2)
+        #     plt.imshow(rendered[1])
+        #     plt.title("final (reward=%0.3f)" % scene_reward)
+        # drawnow(debug)
+        # plt.pause(1.0)
 
         # # b) render depth, compute score on GPU
         # cost_id = None  # consider fit of full scene
@@ -859,63 +920,64 @@ class VerificationSolution:
         #         a = 1
 
         # print("-> selected %s" % self.selection_order[-1])
-        adjacency = list(self.candidates[0].keys())  # TODO could actually compute this for floor as well - then we even save the drop test
-        if EXPAND_ADJACENT:
-            if len(self.selection_order) > 0 and len(self.candidates[1].keys()) > 0:
-
-                adjacency = []
-                for selected_obj in self.selection_order:
-                    # check if they are adjacent to already placed objects
-                    adjacency += self.candidates[1][selected_obj]
-
-                # print("-> selected %s" % self.selection_order[-1])
-                # print("---> candidates are %s" % adjacency)
-
-        # get candidates
-        candidates = []
-        outliers = []
-        for hi, (obj_id, obj_hs) in enumerate(self.candidates[0].items()):
-            if obj_id in adjacency or adjacency is None:
-                h = obj_hs[0]  # TODO only take max-conf one? or current best? or use all and select most stable?
-                candidates.append(h)
-            else:
-                outliers.append(obj_id)
-        for obj_id in outliers:
-            self.candidates[0].pop(obj_id)
-
-        if len(candidates) == 0:
-            return
-
-        # fix current base in its best poses
-        fixed = []
-        fixed_ids = []
-        for obj_id, refiner in self.selected.items():
-            h = refiner.get_best()[0]
-            fixed_ids.append(h.id)
-            fixed.append(h)
-            self.init_for_simulation(h, mass=0, collision_group=1, collision_mask=1)#base_mask)
-
-        displacements = []
-        for hi, h in enumerate(candidates):
-            if h is not None:
-                SIMULATOR.objects_to_use = [h.id] + fixed_ids
-                SIMULATOR.reset_objects()
-
-                # TODO why does this not work with all at once in different collision groups?
-                self.init_for_simulation(h, mass=1, collision_group=2 + hi, collision_mask=1)
-                ds, Ts = self.get_displacements([h], delta=0.01, steps=50)
-                displacements.append(ds[0])
-
-        # reject candidates with a too high displacement
-        th = 0.02
-        inliers = np.array(displacements) <= th  # TODO also filter-out obvious FPs (rendering fit < 0.1)
-
-        # remove outliers
-        if inliers.sum() == 0:  # s.t. we do not throw away everything
-            inliers[np.argmin(displacements)] = True
-        for candidate, is_inlier in zip(candidates, inliers):
-            if not is_inlier:
-                self.candidates[0].pop(candidate.model)
+        # adjacency = list(self.candidates[0].keys())  # TODO could actually compute this for floor as well - then we even save the drop test
+        # if EXPAND_ADJACENT:
+        #     if len(self.selection_order) > 0 and len(self.candidates[1].keys()) > 0:
+        #
+        #         adjacency = []
+        #         for selected_obj in self.selection_order:
+        #             # check if they are adjacent to already placed objects
+        #             adjacency += self.candidates[1][selected_obj]
+        #
+        #         # print("-> selected %s" % self.selection_order[-1])
+        #         # print("---> candidates are %s" % adjacency)
+        #
+        # # get candidates
+        # candidates = []
+        # outliers = []
+        # for hi, (obj_id, obj_hs) in enumerate(self.candidates[0].items()):
+        #     if obj_id in adjacency or adjacency is None:
+        #         h = obj_hs[0]  # TODO only take max-conf one? or current best? or use all and select most stable?
+        #         candidates.append(h)
+        #     else:
+        #         outliers.append(obj_id)
+        # for obj_id in outliers:
+        #     self.candidates[0].pop(obj_id)
+        #
+        # if len(candidates) == 0:
+        #     return
+        #
+        # # fix current base in its best poses
+        # fixed = []
+        # fixed_ids = []
+        # for obj_id, refiner in self.selected.items():
+        #     h = refiner.get_best()[0]
+        #     fixed_ids.append(h.id)
+        #     fixed.append(h)
+        #     self.init_for_simulation(h, mass=0, collision_group=1, collision_mask=1)#base_mask)
+        #
+        # displacements = []
+        # for hi, h in enumerate(candidates):
+        #     if h is not None:
+        #         SIMULATOR.objects_to_use = [h.id] + fixed_ids
+        #         SIMULATOR.reset_objects()
+        #
+        #         # TODO why does this not work with all at once in different collision groups?
+        #         self.init_for_simulation(h, mass=1, collision_group=2 + hi, collision_mask=1)
+        #         ds, Ts = self.get_displacements([h], delta=0.01, steps=50)
+        #         displacements.append(ds[0])
+        #
+        # # reject candidates with a too high displacement
+        # th = 0.02
+        # inliers = np.array(displacements) <= th  # TODO also filter-out obvious FPs (rendering fit < 0.1)
+        #
+        # # remove outliers
+        # if inliers.sum() == 0:  # s.t. we do not throw away everything
+        #     inliers[np.argmin(displacements)] = True
+        # for candidate, is_inlier in zip(candidates, inliers):
+        #     if not is_inlier:
+        #         self.candidates[0].pop(candidate.model)
+        pass
 
     def init_for_simulation(self, h, mass, collision_group, collision_mask):
         obj_str = h.id
@@ -992,8 +1054,12 @@ class VerificationSolution:
         # add object (and RefinementSolution) to selected
         # refinement_solution = RefinementSolution(candidate_hypotheses.copy())
         fixed = [[s.get_best()[0]] for s in list(self.selected.values())]
+        # unexplained = np.ones_like(OBSERVATION['depth'], dtype=np.uint8)
+        # for fix in fixed:
+        #     unexplained[fix[0].render(OBSERVATION, 'depth')[1] > 0] = 0
+        unexplained = None
         refinement_solution = BudgetAllocationBandit(REFINER, OBSERVATION, candidate_hypotheses,
-                                                     fixed=fixed)
+                                                     unexplained=unexplained)
         new_selected = self.selected.copy()
         new_selected[obj_id] = refinement_solution
         new_selection_order = self.selection_order.copy()

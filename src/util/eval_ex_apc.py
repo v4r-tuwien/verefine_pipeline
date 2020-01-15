@@ -141,6 +141,7 @@ if __name__ == "__main__":
             return normal
 
         observation = {
+            # "rgb": rgb,  # TODO debug
             "depth": depth,
             "normals": estimate_normals(depth/1000),
             "extrinsics": camera_extrinsics,
@@ -245,15 +246,45 @@ if __name__ == "__main__":
             obj_depth = scene_depth.copy()
             obj_depth[obj_mask == 0] = 0
 
-            scene_depth_down = None
+            # scene_depth_down = None
             # downsample and mask observed depth
-            depth_pcd = ref.depth_to_cloud(scene_depth, camera_intrinsics, obj_mask)
-            import open3d as o3d
+            # depth_pcd = ref.depth_to_cloud(scene_depth, camera_intrinsics, obj_mask)
+            # import open3d as o3d
+            # pcd, pcd_down = o3d.PointCloud(), o3d.PointCloud()
+            # pcd.points = o3d.Vector3dVector(depth_pcd / 1000)
+            # pcd_down = o3d.voxel_down_sample(pcd, voxel_size=0.005)
+            # scene_depth_down = np.array(pcd_down.points)
+            # print(scene_depth_down.shape)
 
-            pcd, pcd_down = o3d.PointCloud(), o3d.PointCloud()
-            pcd.points = o3d.Vector3dVector(depth_pcd / 1000)
-            pcd_down = o3d.voxel_down_sample(pcd, voxel_size=0.005)
-            scene_depth_down = np.array(pcd_down.points)
+            # or: load downsampled segment
+            with open(
+                "/home/dominik/experiments/PhysimGlobalPose/src/dataset/scene-%0.4d/debug_super4PCS/pclSegment_%s.ply"
+                % (scene, obj_name)
+                , 'r'
+            ) as file:
+                pcd = file.readlines()
+            pcd_seg = []
+            started = False
+            for line in pcd[:-1]:  # last line is meta
+                if not started:
+                    if not line.startswith("end_header"):
+                        continue
+                    else:
+                        started = True
+                        continue
+                parts = line.split(" ")
+                parts = [float(v.replace("\n", "")) for v in parts]
+                pcd_seg.append(parts)
+            scene_depth_down = np.array(pcd_seg)
+            # print(scene_depth_down.shape)
+            #
+            import open3d as o3d
+            pcd = o3d.PointCloud()
+            pcd.points = o3d.Vector3dVector(scene_depth_down)
+            pcd, ind = o3d.statistical_outlier_removal(pcd, 16, 1.0)
+            # pcd, ind = o3d.radius_outlier_removal(pcd, 4, 0.01)
+            scene_depth_down = np.array(pcd.points)
+            # print(scene_depth_down.shape)
 
 
             # hypotheses
@@ -459,6 +490,7 @@ if __name__ == "__main__":
             plt.imshow(vis2)
         drawnow(debug_draw)
         plt.pause(0.05)
+        # plt.pause(5.0)
 
         print("   ---")
         print("   ~ icp/call=%0.1fms" % (np.mean(TrimmedIcp.icp_durations) * 1000))

@@ -161,7 +161,7 @@ class TrimmedIcp(Refiner):
         self.width, self.height = renderer.width, renderer.height
         self.umap = np.array([[j for _ in range(self.width)] for j in range(self.height)])
         self.vmap = np.array([[i for i in range(self.width)] for _ in range(self.height)])
-        self.num_samples = 100  # TODO how many samples required? --> 500 good on exAPC
+        self.num_samples = 0#100  # TODO how many samples required? --> 500 good on exAPC
 
     def depth_to_cloud(self, depth, intrinsics, label=None, roi=None):
 
