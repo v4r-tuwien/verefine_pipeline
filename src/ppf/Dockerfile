@@ -60,7 +60,7 @@ RUN echo "source /home/v4r/catkin_ws/devel/setup.bash" >> /home/v4r/.bashrc
 # clone ros packages, gitlab deploy tokens are needed since the repos aren't public
 RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
                   git clone https://gitlab+deploy-token-22:zKCM9FnYr86bgaABY63_@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf_recognizer_ros.git; \
-                  cd ppf_recognizer_ros; git checkout 2d0d57d'
+                  cd ppf_recognizer_ros; git checkout bbf03129'
 
 RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
                   git clone https://gitlab+deploy-token-23:xzQLssogTa-t5igeXrv8@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf_recognizer_ros_msgs.git; \
