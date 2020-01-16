@@ -33,9 +33,9 @@ def detect(rgb):
 
 
 def estimate(rgb, depth, detection):
-    rospy.wait_for_service('estimate_pose')
+    rospy.wait_for_service('estimate_poses')
     try:
-        estimate_pose = rospy.ServiceProxy('estimate_pose', estimate_poses)
+        estimate_pose = rospy.ServiceProxy('estimate_poses', estimate_poses)
         response = estimate_pose(detection, rgb, depth)
         return response.poses
     except rospy.ServiceException as e:
@@ -83,7 +83,7 @@ class Grasper:
 
     def grasp(self, req):
 
-	response = get_posesResponse()
+        response = get_posesResponse()
 
         # === check if we have an image ===
 
@@ -122,7 +122,7 @@ class Grasper:
             print("requesting pose estimate...")
             instance_poses = estimate(self.rgb, self.depth, detection)
             print("   received pose.")
-            assert len(instance_poses) == 5  # TODO
+            # assert len(instance_poses) == 5  # TODO
             # for instance_pose in instance_poses:
             #   self.vis_pose(instance_poses, "_estimated")
 
