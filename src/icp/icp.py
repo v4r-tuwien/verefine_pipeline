@@ -146,6 +146,7 @@ import sys
 sys.path.append("/home/dominik/projects/hsr-grasping/src/icp/cpp/build")
 import icp
 from scipy.spatial.transform.rotation import Rotation
+from scipy.spatial import cKDTree as KDTree
 import time
 
 
@@ -202,7 +203,8 @@ class TrimmedIcp(Refiner):
         return cloud
 
     def refine(self, rgb, depth, intrinsics, roi, mask, obj_id,
-               estimate, iterations, cloud_obs=None, cloud_ren=None):
+               estimate, iterations, cloud_obs=None, cloud_ren=None,
+               explained=None):
 
         q, t, c = estimate
         obj_T = np.matrix(np.eye(4))
@@ -218,14 +220,32 @@ class TrimmedIcp(Refiner):
             if cloud_obs.shape[0] == 0:
                 return estimate
 
+            cloud_obs2 = cloud_obs[np.random.choice(list(range(cloud_obs.shape[0])), 100), :]
+            if explained is not None and len(explained) > 0:
+                cloud_exp = None
+                for h_ex in explained:
+                    ex_id = int(h_ex[0].model)
+                    ex_T = h_ex[0].transformation
+                    ex_pts = np.dot(self.dataset.pcd[ex_id - 1], ex_T[:3, :3].T) + ex_T[:3, 3].T
+                    if cloud_exp is None:
+                        cloud_exp = ex_pts
+                    else:
+                        cloud_exp = np.concatenate((cloud_exp, ex_pts), axis=0)
+
+                exp_tree = KDTree(cloud_exp)
+                indices = exp_tree.query_ball_point(cloud_obs, r=0.008)
+                unexplained = [len(ind) == 0 for ind in indices]
+                cloud_obs2 = cloud_obs[unexplained]
+
             # TODO replace estimate with hypothesis -- then we can just call render method of h
             # create estimated point cloud (TODO could just load model point cloud once and transform it here)
-            obj_id = self.renderer.dataset.objlist.index(obj_id)
-
+            # obj_id = self.renderer.dataset.objlist.index(obj_id)
+            #
             # rendered = self.renderer.render([obj_id], [obj_T],
             #                            np.matrix(np.eye(4)), intrinsics,
             #                            mode='depth')
             # cloud_ren = self.depth_to_cloud(rendered[1], intrinsics, rendered[1] > 0)
+            # cloud_ren = cloud_ren[np.random.choice(list(range(cloud_ren.shape[0])), 500), :]
 
             cloud_ren = np.dot(self.dataset.pcd[obj_id-1], obj_T[:3, :3].T) + obj_T[:3, 3].T
             # if cloud_ren.shape[0] > 500:#self.num_samples:
@@ -261,7 +281,7 @@ class TrimmedIcp(Refiner):
             # T = reg_p2p.transformation
             # st = time.time()
             # c) using own python bindings to pcl
-            T = icp.tricp(cloud_obs, cloud_ren, 0.9)
+            T = icp.tricp(cloud_obs2, cloud_ren, 1.0)
             # TODO icp.icp (would this require normals? then we'd have to adapt the cpp code)
             # print("%0.1fms" % ((time.time() - st) * 1000))
             # -- apply trafo

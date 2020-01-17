@@ -64,17 +64,20 @@ def fit(observation, rendered, unexplained):
     depth_ren = rendered[1] * 1000  # in mm TODO or do this in renderer?
 
     # mask = np.logical_and(mask, depth_ren>0)#np.logical_and(mask, np.logical_and(depth_ren > 0, depth_obs > 0))# TODO or just
-    mask = depth_ren>0#np.logical_and(unexplained, depth_ren>0)
+    mask = depth_ren>0
+    if unexplained is not None:
+        mask = np.logical_and(unexplained, mask)  #depth_ren>0#
+
     if np.count_nonzero(mask) == 0:  # no valid depth values
         cost_durations.append(time.time() - st)
         return 0
 
     # masks
-    depth_mask = np.logical_and(mask, depth_ren - depth_obs < TAU_VIS)  # only visible -- ren at most [TAU_VIS] behind obs
-    cos_mask = depth_mask#np.logical_and(mask, depth_ren - depth_obs < 10)
-
-    # visibility
-    visibility_ratio = float(depth_mask.sum()) / float((depth_ren > 0).sum())  # visible / rendered count
+    depth_mask = mask#np.logical_and(mask, depth_ren - depth_obs < TAU_VIS)  # only visible -- ren at most [TAU_VIS] behind obs
+    # cos_mask = depth_mask#np.logical_and(mask, depth_ren - depth_obs < 10)
+    #
+    # # visibility
+    # visibility_ratio = float(depth_mask.sum()) / float((depth_ren > 0).sum())  # visible / rendered count
 
     # delta fit
     dist = np.abs(depth_obs[depth_mask] - depth_ren[depth_mask])
@@ -99,11 +102,12 @@ def fit(observation, rendered, unexplained):
     # fit = visibility_ratio * aldoma_fit
     # fit = visibility_ratio * ((1 - delta)*0.7 + cos_fit*0.3)
     # fit = visibility_ratio * (1 - delta) * cos_fit
-    if unexplained is None or float((depth_mask>0).sum()) == 0:
-        overlap = 0
-    else:
-        overlap = float(np.logical_and(unexplained==0, depth_mask>0).sum()) / float((depth_mask>0).sum())#float(np.logical_or(unexplained==0, depth_ren>0).sum())
-    fit = visibility_ratio * (1 - delta) * (1-overlap)
+    # if unexplained is None or float((depth_mask>0).sum()) == 0:
+    #     overlap = 0
+    # else:
+    #     overlap = float(np.logical_and(unexplained==0, depth_mask>0).sum()) / float((depth_mask>0).sum())#float(np.logical_or(unexplained==0, depth_ren>0).sum())
+    # fit = visibility_ratio * (1 - delta) * (1-overlap)
+    fit = (1-delta) #* (1-overlap)
     if np.isnan(fit):  # invisible object
         cost_durations.append(time.time() - st)
         return 0
@@ -207,7 +211,7 @@ class PhysIR:
         self.PHYSICS_STEPS = 20
         self.REFINEMENTS_PER_ITERATION = 1
 
-    def refine(self, hypothesis, override_iterations=-1, unexplained=None):
+    def refine(self, hypothesis, override_iterations=-1, explained=None):
         """
 
         :param hypothesis:
@@ -252,9 +256,11 @@ class PhysIR:
 
             hypothesis.refiner_param[6] = [Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat(),
                                            np.array(hypothesis.transformation[:3, 3]).T[0], 1.0]
-            if unexplained is not None:
-                hypothesis.refiner_param[1] = hypothesis.refiner_param[1].copy()
-                hypothesis.refiner_param[1][unexplained==0] = 0
+            # if unexplained is not None:
+                # hypothesis.refiner_param[1] = hypothesis.refiner_param[1].copy()
+                # hypothesis.refiner_param[1][unexplained==0] = 0
+            hypothesis.refiner_param[10] = explained
+
             q, t, _ = self.refiner.refine(*hypothesis.refiner_param)
             hypothesis.transformation[:3, :3] = Rotation.from_quat(q).as_dcm()
             hypothesis.transformation[:3, 3] = t.reshape(3, 1)
@@ -304,7 +310,7 @@ class BudgetAllocationBandit:
         self.observation = observation
 
         self.pool = [[h] for h in hypotheses + [None] * len(hypotheses)]  # for the phys hypotheses
-        self.max_iter = 2 * len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
+        self.max_iter = 3 * len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
 
 
         # # TODO debug hypotheses and fit computation
@@ -369,7 +375,7 @@ class BudgetAllocationBandit:
             # ROLLOUT
             self.pir.fixed = fixed
             # SIMULATOR.objects_to_use.append(child.id)
-            physics_hypotheses = self.pir.refine(child, override_iterations=1, unexplained=unexplained)
+            physics_hypotheses = self.pir.refine(child, override_iterations=1, explained=fixed)
             # SIMULATOR.objects_to_use = SIMULATOR.objects_to_use[:-1]
             physics_child = physics_hypotheses[-2]  # after last refinement step TODO was [0] - bc child was overwritten in refine?
             child = physics_hypotheses[-1]
