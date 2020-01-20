@@ -36,23 +36,23 @@ class DenseFusion(Refiner):
         self.vmap = np.array([[i for i in range(self.width)] for _ in range(self.height)])
 
         # dataset specific DenseFusion setting
-        self.num_points = 1000
+        self.num_points = dataset.num_points#1000
         self.refinement_steps = 2
         self.bs = 1
 
         # init networks
-        prefix = '../..' # TODO '/densefusion'
-        estimate_model = prefix + '/data/pose_model_26_0.012863246640872631.pth'
+        # prefix = '../..' # TODO '/densefusion'
+        # estimate_model = prefix + '/data/pose_model_26_0.012863246640872631.pth'
         self.estimator = PoseNet(num_points=self.num_points, num_obj=self.dataset.num_objects)
         self.estimator.cuda()
-        self.estimator.load_state_dict(torch.load(estimate_model))
+        self.estimator.load_state_dict(torch.load(dataset.estimate_model))
         self.estimator.eval()
 
         if not only_estimator:
-            refine_model = prefix + "/data/pose_refine_model_69_0.009449292959118935.pth"  # TODO
+            # refine_model = prefix + "/data/pose_refine_model_69_0.009449292959118935.pth"  # TODO
             self.refiner = PoseRefineNet(num_points=self.num_points, num_obj=self.dataset.num_objects)
             self.refiner.cuda()
-            self.refiner.load_state_dict(torch.load(refine_model))
+            self.refiner.load_state_dict(torch.load(dataset.refine_model))
             self.refiner.eval()
         self.only_estimator = only_estimator
 
@@ -162,7 +162,8 @@ class DenseFusion(Refiner):
             emb, cloud = None, None
         return hypotheses, emb, cloud
 
-    def refine(self, rgb, depth, intrinsics, roi, mask, class_id, hypothesis, iterations=1, emb=None, cloud=None):
+    def refine(self, rgb, depth, intrinsics, roi, mask, class_id, hypothesis, iterations=1, emb=None, cloud=None,
+               explained=None):
         """
 
         :param rgb:

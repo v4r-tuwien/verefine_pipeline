@@ -141,6 +141,94 @@ class YcbvDataset:
             [1.00, 1.00, 0.94],  # 20: "061_foam_brick"
         ]
 
+        self.num_points = 1000
+        self.estimate_model = "../../data/pose_model_26_0.012863246640872631.pth"
+        self.refine_model = "../../data/pose_refine_model_69_0.009449292959118935.pth"
+
+
+class LmDataset:
+    """
+
+    Load dataset given in BOP19 format (https://bop.felk.cvut.cz/datasets/).
+    Based on BOP toolkit (https://github.com/thodan/bop_toolkit).
+
+    """
+
+    def __init__(self, base_path="/verefine/data/"):
+        # derived properties
+        self.num_objects = 13
+        self.objlist = [0, 1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15]
+
+        # TODO load model_info.json for the dataset
+        self.obj_masses = [
+            5,  # gorilla TODO was 0.5
+            5,  # clamp
+            1,  # bowl
+            2,  # camera
+            3,  # can
+            0.5,  # cat
+            0.25,  # cup
+            5,  # drill
+            0.5,  # duck
+            0.25,  # eggs
+            0.5,  # glue
+            3,  # puncher
+            5,  # iron
+            4,  # lamp
+            1  # phone
+        ]
+        self.obj_masses = [float(mass) for mass in self.obj_masses]
+        self.obj_names = {  # as in DeepIM
+            -1: "ground",
+            0: "ape",
+            1: "benchvise",
+            2: "bowl",
+            3: "camera",
+            4: "can",
+            5: "cat",
+            6: "cup",
+            7: "driller",
+            8: "duck",
+            9: "eggbox",
+            10: "glue",
+            11: "holepuncher",
+            12: "iron",
+            13: "lamp",
+            14: "phone"
+        }
+        self.obj_coms = [
+            -45.88363,  # gorilla
+            -109.71,  # clamp
+            -37.24,  # bowl
+            -50.25,  # camera
+            -96.87,  # can
+            -58.23351,  # cat TODO "up" is tilted, so there is no clear ground plane for object
+            -47.31,  # cup
+            -103.5,  # drill
+            -42.85,  # druck
+            -34.62,  # eggs
+            -86.41,  # glue
+            -45.40,  # puncher
+            -70.57,  # iron
+            -106.56,  # lamp
+            -92.37  # phone
+        ]
+        self.obj_coms = [com / 1000 for com in self.obj_coms]
+        self.obj_coms = [com / 0.75 for com in self.obj_coms]
+
+        self.base_path = base_path
+        self.model_paths = sorted(
+            glob.glob(self.base_path + "/models/obj_*.obj"))  # -> obj_01 will have id 1 in segmentation mask
+        self.model_paths = [path for path in self.model_paths if "collider" not in path]
+        # self.model_paths = [self.base_path + "/models/obj_%0.2d.obj" % obj_id for obj_id in self.objlist[1:]]
+        self.mesh_scale = [1e-3] * 3
+        self.obj_scales = [[1e-3] * 3] * 15
+
+        self.num_points = 500
+        self.estimate_model = '../../data/pose_model_9_0.01310166542980859.pth'
+        self.refine_model = '../../data/pose_refine_model_493_0.006761023565178073.pth'
+
+
 import open3d as o3d
 import numpy as np
 

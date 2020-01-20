@@ -144,7 +144,7 @@ class Model:
         self.obj_id = -1
         self.vertex_buffer, self.index_buffer, self.texture = None, None, None
 
-    def from_arrays(self, obj_id, pts, normals, colors, faces, texture=None, uvs=None):
+    def from_arrays(self, obj_id, pts, normals, colors, faces, texture=None, uvs=None, recompute_normals=False):
         self.obj_id = obj_id
 
         colors = np.float32(colors[:, :3])
@@ -169,7 +169,7 @@ class Model:
 
         Model._idx_offset += vertices.shape[0]
 
-    def from_obj(self, obj_id, path):
+    def from_obj(self, obj_id, path, obj_scale, recompute_normals=False):
         self.obj_id = obj_id
         print("reading %s" % path)
 
@@ -181,7 +181,7 @@ class Model:
 
         attributes = reader.GetAttrib()
         pts = np.array(attributes.vertices)
-        # normals = np.array(attributes.normals)
+        normals = np.array(attributes.normals)
         colors = np.array(attributes.colors)
         texture_uv = np.array(attributes.texcoords)
 
@@ -192,7 +192,8 @@ class Model:
         # reshape to vertex_count
         vertex_count = int(pts.shape[0]/3)
         pts = pts.reshape(vertex_count, 3)
-        # normals = normals.reshape(vertex_count, 3)
+        pts *= np.array(obj_scale)
+        normals = normals.reshape(vertex_count, 3)
         colors = colors.reshape(vertex_count, 3)
         uv_count = int(texture_uv.shape[0] / 2)
         texture_uv = texture_uv.reshape(uv_count, 2)
@@ -200,18 +201,19 @@ class Model:
         # blow up pts, colors and normals to indices size # TODO ideally we just want uv_count vertices; adapt faces accordingly
         pts = pts[indices.reshape(index_count, 3)[:, 0]]
         colors = colors[indices.reshape(index_count, 3)[:, 0]]
-        # normals = normals[indices.reshape(index_count, 3)[:, 1]]
+        normals = normals[indices.reshape(index_count, 3)[:, 1]]
 
-        # recompute normals
-        def normalize(v):
-            return v / np.linalg.norm(v)
+        if recompute_normals:
+            # recompute normals
+            def normalize(v):
+                return v / np.linalg.norm(v)
 
-        normals = []
-        for face_pts in pts.reshape(int(pts.shape[0] / 3), 3, 3):
-            p0, p1, p2 = face_pts
-            n = normalize(np.cross(normalize(p2 - p0), normalize(p1 - p0)))
-            normals += [n, n, n]
-        normals = np.array(normals)
+            normals = []
+            for face_pts in pts.reshape(int(pts.shape[0] / 3), 3, 3):
+                p0, p1, p2 = face_pts
+                n = normalize(np.cross(normalize(p2 - p0), normalize(p1 - p0)))
+                normals += [n, n, n]
+            normals = np.array(normals)
 
         normals = normals / np.linalg.norm(normals, axis=1).reshape(normals.shape[0], 1)
         texture_uv = texture_uv[indices.reshape(index_count, 3)[:, 2]]
@@ -302,7 +304,7 @@ class Renderer:
 
     _main_egl_ctx = None
 
-    def __init__(self, dataset, width=640, height=480, near=0.01, far=5.0):
+    def __init__(self, dataset, width=640, height=480, near=0.01, far=5.0, recompute_normals=False):
         self.width, self.height = width, height
         self.near, self.far = near, far
 
@@ -334,7 +336,7 @@ class Renderer:
         self.models = [Plane()]
         self.dataset = dataset
         if dataset is not None:
-            self.prepare_models(dataset)
+            self.prepare_models(dataset, recompute_normals)
 
         self.screenquad = ScreenQuad(self.color_depth_buf)
         self.models.append(self.screenquad)
@@ -441,23 +443,25 @@ class Renderer:
         egl.eglDestroyContext(self.eglDpy, self.eglCtx)
         egl.eglTerminate(self.eglDpy)
 
-    def prepare_models(self, dataset):
+    def prepare_models(self, dataset, recompute_normals=False):
         if hasattr(dataset, "faces"):
             cld, normals, colors, faces = dataset.cld, dataset.normals, dataset.colors, dataset.faces
             models = list(cld.keys())
 
             for idx in models:
                 model = Model()
-                model.from_arrays(idx, cld[idx], normals[idx], colors[idx], faces[idx])
+                model.from_arrays(idx, cld[idx], normals[idx], colors[idx], faces[idx], recompute_normals=recompute_normals)
                 self.models.append(model)
         else:
-            for path in dataset.model_paths:
-                model = Model()
-                # if hasattr(dataset, "faces"):
-                #     model.load_ply(path.replace(".obj", ".ply"))
-                # else:
-                model.from_obj(1, path)  # TODO get correct obj id
-                self.models.append(model)
+            for idx, path in enumerate(dataset.model_paths):
+                if idx+1 in dataset.objlist:
+                    model = Model()
+                    # if hasattr(dataset, "faces"):
+                    #     model.load_ply(path.replace(".obj", ".ply"))
+                    # else:
+                    obj_scale = dataset.obj_scales[idx]
+                    model.from_obj(1, path, obj_scale, recompute_normals=recompute_normals)  # TODO get correct obj id
+                    self.models.append(model)
 
     # Model-view matrix
     def _compute_model_view(self, model, view):
@@ -543,7 +547,7 @@ class Renderer:
             self.program['u_texture'] = self.color_depth_buf
             dims = 4
             format = gl.GL_BGRA
-            self.program['u_mode'] = 3
+            self.program['u_mode'] = 4
             # self.program['u_observation'] = self.observation
 
             self.program['u_mv'] = np.eye(4)

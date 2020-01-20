@@ -42,7 +42,7 @@ TODO
 """
 
 # settings
-PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline2_fixed-tab1.5-tricp1.0-250-30s_lcp/"#_fcnn-pcs-lcp/"
+PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline2_fixed-tab1.5-tricp1.0-250-30s_lcp/"
 PATH_APC_old = "/home/dominik/experiments/PhysimGlobalPose/src/dataset/"
 
 POOL = "clusterPose"  # "allPose" for Super4PCS(?) ordered by LCP, "clusterPose" for cluster hypotheses (exactly 25), "super4pcs" for Super4PCS (best LCP), "search" for MCTS
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     errors_ssd, errors_adi, errors_vsd = [], [], []
 
     # if MODE != "BASE" or REF_MODE == "ICP":
-    renderer = Renderer(dataset)
+    renderer = Renderer(dataset, recompute_normals=True)
     Verefine.RENDERER = renderer
         # renderer.create_egl_context()
 

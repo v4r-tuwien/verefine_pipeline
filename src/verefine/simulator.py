@@ -122,6 +122,7 @@ class Simulator:
                 logging.error("Failed to load model at '%s'." % model_path)
                 logging.error(ex.args[0])  # original error message
                 self.models.clear()
+                raise ValueError("Model paths seems to be wrong.")
 
         for hi in range(1, self.instances_per_object):
             for i_model, collision_shape in zip(i_models, collision_shapes):

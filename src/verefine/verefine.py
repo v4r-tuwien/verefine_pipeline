@@ -25,13 +25,13 @@ USE_COLLISION_CLUSTERING = True  # else rendering-based version
 USE_ICP = False  # else use DF as refiner
 FIX_OTHERS = True  # whether to fix supporting objects in their best hypothesis (True) or simulate them as well (False)
 EXPAND_ADJACENT = False  # whether to only expand adjacent objects (True) or based on <2cm displacement (False)
-TRACK_CONVERGENCE = True  # get best hypotheses at each iteration of SV (1 iter ~ [OV budget] iterations of plain MCTS)
+TRACK_CONVERGENCE = False  # get best hypotheses at each iteration of SV (1 iter ~ [OV budget] iterations of plain MCTS)
 # POLICY = UCB
 C = 1  # TODO was 1e-1
 
 ALL_OBJECTS = True
-HYPOTHESES_PER_OBJECT = 25
-ITERATIONS = 1
+HYPOTHESES_PER_OBJECT = 1
+ITERATIONS = 2
 REFINEMENTS_PER_ITERATION = 1
 BUDGET_SCALE = 1 if not ALL_OBJECTS else 3  # scales max iterations of verification (1... nobject * max iter per object -> one wrong node and we cannot refine all)
 REFINE_AT_ONCE = True  # during SV, spend budget one-by-one (False) or all at once (True)
@@ -74,7 +74,7 @@ def fit(observation, rendered, unexplained):
 
     # masks
     depth_mask = mask#np.logical_and(mask, depth_ren - depth_obs < TAU_VIS)  # only visible -- ren at most [TAU_VIS] behind obs
-    # cos_mask = depth_mask#np.logical_and(mask, depth_ren - depth_obs < 10)
+    cos_mask = depth_mask#np.logical_and(mask, depth_ren - depth_obs < 10)
     #
     # # visibility
     # visibility_ratio = float(depth_mask.sum()) / float((depth_ren > 0).sum())  # visible / rendered count
@@ -94,20 +94,21 @@ def fit(observation, rendered, unexplained):
     #
     # # Aldoma
     # assert depth_mask.shape[0] == cos_mask.shape[0]
-    # aldoma_fit = (1 - dist/TAU) * cos
-    # aldoma_fit[dist > TAU] = 0
-    # aldoma_fit = np.mean(aldoma_fit)
+    # aldoma_delta = (1 - dist/TAU) * cos
+    # aldoma_delta[dist > TAU] = 0
+    # fit = np.mean(aldoma_delta)
+
+    # TODO mask already removes explained stuff -- so we need a way to have same size of delta and lamba w/o this
+    # aldoma_lambda = np.logical_not(np.logical_and(unexplained == 0, depth_mask > 0))[mask]  # already explained and would be visible
+    # fit = np.mean((aldoma_delta + aldoma_lambda)/2)
+
+    # TODO clutter term
+    # ...
 
     # TODO multi assignment + scaling per term
-    # fit = visibility_ratio * aldoma_fit
-    # fit = visibility_ratio * ((1 - delta)*0.7 + cos_fit*0.3)
     # fit = visibility_ratio * (1 - delta) * cos_fit
-    # if unexplained is None or float((depth_mask>0).sum()) == 0:
-    #     overlap = 0
-    # else:
-    #     overlap = float(np.logical_and(unexplained==0, depth_mask>0).sum()) / float((depth_mask>0).sum())#float(np.logical_or(unexplained==0, depth_ren>0).sum())
-    # fit = visibility_ratio * (1 - delta) * (1-overlap)
-    fit = (1-delta) #* (1-overlap)
+    # fit = visibility_ratio * (1 - delta)
+    fit = (1-delta)
     if np.isnan(fit):  # invisible object
         cost_durations.append(time.time() - st)
         return 0
@@ -177,15 +178,15 @@ class Hypothesis:
         """
 
         # a) render depth, compute score on CPU
-        rendered = self.render(observation, mode='depth')#+normal')
-        # unexplained = np.ones_like(self.mask)# TODO self.mask
-        # for hs in fixed:
-        #     h_mask = hs[0].render(observation, mode='depth+seg')[2]
-        #     unexplained[h_mask > 0] = 0
-        score = fit(observation, rendered, unexplained)
+        # rendered = self.render(observation, mode='depth')#+normal')
+        # # unexplained = np.ones_like(self.mask)# TODO self.mask
+        # # for hs in fixed:
+        # #     h_mask = hs[0].render(observation, mode='depth+seg')[2]
+        # #     unexplained[h_mask > 0] = 0
+        # score = fit(observation, rendered, unexplained)
 
         # b) render depth, compute score on GPU  TODO has a bug when object is too far off
-        # _, score = self.render(observation, "cost", fixed)
+        _, score = self.render(observation, "cost")
 
         return score
 
@@ -218,7 +219,7 @@ class PhysIR:
         :return:
         """
 
-        iterations = hypothesis.refiner_param[-3] if override_iterations == -1 else override_iterations
+        iterations = hypothesis.refiner_param[-4] if override_iterations == -1 else override_iterations
         self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
         self.simulator.reset_objects()
 
@@ -310,7 +311,7 @@ class BudgetAllocationBandit:
         self.observation = observation
 
         self.pool = [[h] for h in hypotheses + [None] * len(hypotheses)]  # for the phys hypotheses
-        self.max_iter = 3 * len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
+        self.max_iter = ITERATIONS * len(hypotheses) + len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
 
 
         # # TODO debug hypotheses and fit computation
@@ -359,7 +360,7 @@ class BudgetAllocationBandit:
         iteration = np.sum(self.plays)
         if iteration < self.max_iter and self.active.sum() > 0:
             # SELECT
-            c = 1  # TODO used 1e-3 for YCBV
+            c = 1e-3 # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
             ucb_scores = [r + np.sqrt(c) * np.sqrt(np.log(iteration) / n) for r, n in zip(self.rewards, self.plays)]
 
             ucb_scores = np.array(ucb_scores)
