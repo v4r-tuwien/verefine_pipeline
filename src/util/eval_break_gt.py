@@ -11,6 +11,10 @@ import time
 import torch
 import gc
 import random
+import sys
+sys.path.append("/home/dominik/projects/hsr-grasping")
+sys.path.append("/home/dominik/projects/hsr-grasping/src")
+sys.path.append("/home/dominik/projects/hsr-grasping/src/util")
 
 # make reproducible (works up to BAB -- TODO VF smh not)
 seed = 0
@@ -39,7 +43,7 @@ PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
 PATH_LM = "/mnt/Data/datasets/SIXD/LM_LM-O/"
 PATH_LM_ROOT = '/mnt/Data/datasets/Linemod_preprocessed/'
 
-MODE = "BAB"  # "BASE", "PIR", "BAB", "SV", "VF"
+# MODE = "BAB"  # "BASE", "PIR", "BAB", "SV", "VF"
 EST_MODE = "GT"  # "GT", "DF", "PCS"
 REF_MODE = "DF"  # "DF", "ICP"
 SEGMENTATION = "GT"  # GT, PCNN
@@ -47,11 +51,11 @@ TAU = 20
 TAU_VIS = 10  # [mm]
 
 # REPETITIONS = 2
-MODE_OFF = "r"  # "t", "r"
+# MODE_OFF = "t"  # "t", "r"
 # TRANSLATION_OFF = 50  # [mm] offset +- in every axis individually -> 6 perturbed poses
 # ANGLE_OFF = 30  # degrees offset +- in every axis individually -> 6 perturbed poses
 # OFFSET = TRANSLATION_OFF if MODE_OFF == "t" else ANGLE_OFF
-OFFSETS = [20]#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
+OFFSETS = list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
 
 obj_names = {
     1: "ape",
@@ -74,6 +78,13 @@ obj_names = {
 # -----------------
 
 if __name__ == "__main__":
+
+    if len(sys.argv) > 1 and len(sys.argv) == 3:
+        # refine mode, offset mode and offset size (0 is script path)
+        MODE = sys.argv[1]
+        MODE_OFF = sys.argv[2]
+        # OFFSETS = [int(sys.argv[3])]
+    print("mode: %s -- offsets: %s %s" % (MODE, MODE_OFF, OFFSETS))
 
     dataset = LmDataset(base_path=PATH_LM)
 
@@ -196,11 +207,6 @@ if __name__ == "__main__":
             pose[:3, :3] = np.array(pose_info['cam_R_m2c']).reshape(3, 3)
             pose[:3, 3] = np.array(pose_info['cam_t_m2c']).reshape(3, 1)/1000
             obj_poses = [pose]
-            obj_Ts = []
-            hypotheses = []
-            offsets = []
-            estimates = []
-            refiner_params = []
 
             # TODO still a bit leaky -- check using fast.ai GPUMemTrace
             gc.collect()
@@ -275,6 +281,17 @@ if __name__ == "__main__":
                 emb, cloud = None, None
 
             for OFFSET in OFFSETS:
+                print("      offset %i" % OFFSET)
+
+                obj_Ts = []
+                hypotheses = []
+                offsets = []
+                estimates = []
+                refiner_params = []
+
+                # TODO still a bit leaky -- check using fast.ai GPUMemTrace
+                gc.collect()
+                torch.cuda.empty_cache()
 
                 if emb is not None or REF_MODE != "DF":
                     if EST_MODE == "DF":
@@ -441,10 +458,7 @@ if __name__ == "__main__":
                     refinements = 0
                     for obj_hypotheses in hypotheses:
                         # set according to actual number of hypotheses (could be less for PCS if we don't find enough)
-                        Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(obj_hypotheses)
-
-                        if frame == 55:
-                            a=1
+                        # Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(obj_hypotheses)
 
                         bab = BudgetAllocationBandit(pir, observation, obj_hypotheses)
                         bab.refine_max()
@@ -508,8 +522,9 @@ if __name__ == "__main__":
                 for hypothesis in final_hypotheses:
                     # with open("/home/dominik/projects/hsr-grasping/break/GT_lm-test.csv",
                     #           'a') as file:
-                    with open("/home/dominik/projects/hsr-grasping/break/%s%i-%s%0.2d_lm-test.csv"
-                              % (MODE, Verefine.HYPOTHESES_PER_OBJECT, MODE_OFF, OFFSET), 'a') as file:
+                    # with open("/home/dominik/projects/hsr-grasping/break/%s%s%s%0.2d_lm-test.csv"
+                    with open("/home/dominik/projects/hsr-grasping/log/%s/%s%s%0.2d_lm-test.csv"
+                              % (MODE, "%i-" % Verefine.HYPOTHESES_PER_OBJECT if MODE=="BAB" else "", MODE_OFF, OFFSET), 'a') as file:
                         parts = ["%0.2d" % scene, "%i" % frame, "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
                                  " ".join(["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
                                  " ".join(["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),

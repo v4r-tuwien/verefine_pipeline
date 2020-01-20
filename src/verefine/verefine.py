@@ -177,7 +177,7 @@ class Hypothesis:
         :return:
         """
 
-        # a) render depth, compute score on CPU
+        # # a) render depth, compute score on CPU
         # rendered = self.render(observation, mode='depth')#+normal')
         # # unexplained = np.ones_like(self.mask)# TODO self.mask
         # # for hs in fixed:
@@ -219,7 +219,14 @@ class PhysIR:
         :return:
         """
 
-        iterations = hypothesis.refiner_param[-4] if override_iterations == -1 else override_iterations
+        # TODO check if this is correct
+        if override_iterations == -1:
+            iterations = hypothesis.refiner_param[-4]
+            hypothesis.refiner_param[-4] = 1  # TODO or Refs_per_iter?
+        else:
+            iterations = override_iterations
+            hypothesis.refiner_param[-4] = 1
+        # iterations = hypothesis.refiner_param[-4] if override_iterations == -1 else override_iterations
         self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
         self.simulator.reset_objects()
 
@@ -358,13 +365,14 @@ class BudgetAllocationBandit:
     # TODO caller has to handle the fixing of the environment
     def refine(self, fixed=[], unexplained=None):
         iteration = np.sum(self.plays)
-        if iteration < self.max_iter and self.active.sum() > 0:
+        if iteration < self.max_iter:
             # SELECT
             c = 1e-3 # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
             ucb_scores = [r + np.sqrt(c) * np.sqrt(np.log(iteration) / n) for r, n in zip(self.rewards, self.plays)]
 
             ucb_scores = np.array(ucb_scores)
-            ucb_scores[self.active==0] = -1
+            if self.active.sum() > 0:
+                ucb_scores[self.active==0] = -1
 
             hi = np.argmax(ucb_scores)
 
@@ -402,6 +410,7 @@ class BudgetAllocationBandit:
             self.plays[hi] += 1
             self.pir.fixed = []  # reset s.t. at any time original state is retained
 
+            # TODO should deactivate?
             if self.fits[hi][self.plays[hi]-1] - self.fits[hi][self.plays[hi]-2] <= 0:
                 self.active[hi] = 0
 
