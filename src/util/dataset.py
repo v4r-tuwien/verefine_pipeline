@@ -196,25 +196,25 @@ class LmDataset:
             13: "lamp",
             14: "phone"
         }
-        self.obj_coms = [
-            -45.88363,  # gorilla
-            -109.71,  # clamp
-            -37.24,  # bowl
-            -50.25,  # camera
-            -96.87,  # can
-            -58.23351,  # cat TODO "up" is tilted, so there is no clear ground plane for object
-            -47.31,  # cup
-            -103.5,  # drill
-            -42.85,  # druck
-            -34.62,  # eggs
-            -86.41,  # glue
-            -45.40,  # puncher
-            -70.57,  # iron
-            -106.56,  # lamp
-            -92.37  # phone
+        self.obj_bot = [  # from models_info.json (BOP19)
+            -45.8845,  # gorilla
+            -109.705,  # clamp
+            -37.2364,  # bowl
+            -50.2485,  # camera
+            -96.867,  # can
+            -58.7283,  # cat TODO "up" is tilted, so there is no clear ground plane for object
+            -47.3112,  # cup
+            -104.001,  # drill
+            -42.8485,  # druck
+            -34.6207,  # eggs
+            -86.4079,  # glue
+            -45.4,  # puncher
+            -70.5662,  # iron
+            -106.558,  # lamp
+            -92.3737  # phone
         ]
-        self.obj_coms = [com / 1000 for com in self.obj_coms]
-        self.obj_coms = [com / 0.75 for com in self.obj_coms]
+        self.obj_bot = [com / 1000 for com in self.obj_bot]
+        self.obj_coms = [com / 0.75 for com in self.obj_bot]
 
         self.base_path = base_path
         self.model_paths = sorted(

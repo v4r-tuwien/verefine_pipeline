@@ -43,19 +43,24 @@ PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
 PATH_LM = "/mnt/Data/datasets/SIXD/LM_LM-O/"
 PATH_LM_ROOT = '/mnt/Data/datasets/Linemod_preprocessed/'
 
-# MODE = "BAB"  # "BASE", "PIR", "BAB", "SV", "VF"
+MODE = "MITASH"  # "BASE", "PIR", "BAB", "SV", "VF", MITASH
 EST_MODE = "GT"  # "GT", "DF", "PCS"
 REF_MODE = "DF"  # "DF", "ICP"
 SEGMENTATION = "GT"  # GT, PCNN
+EXTRINSICS = "GT"  # GT, PLANE
 TAU = 20
 TAU_VIS = 10  # [mm]
 
 # REPETITIONS = 2
-# MODE_OFF = "t"  # "t", "r"
+MODE_OFF = "r"  # "t", "r"
 # TRANSLATION_OFF = 50  # [mm] offset +- in every axis individually -> 6 perturbed poses
 # ANGLE_OFF = 30  # degrees offset +- in every axis individually -> 6 perturbed poses
 # OFFSET = TRANSLATION_OFF if MODE_OFF == "t" else ANGLE_OFF
-OFFSETS = list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
+OFFSETS = [5, 10, 15, 20, 30, 35, 40, 45, 50]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
+SCENES = []
+
+PLOT = False
+USE_NORMALS = False
 
 obj_names = {
     1: "ape",
@@ -79,20 +84,23 @@ obj_names = {
 
 if __name__ == "__main__":
 
-    if len(sys.argv) > 1 and len(sys.argv) == 3:
+    dataset = LmDataset(base_path=PATH_LM)
+    SCENES = dataset.objlist[1:]
+
+    if len(sys.argv) > 1 and len(sys.argv) >= 3:
         # refine mode, offset mode and offset size (0 is script path)
         MODE = sys.argv[1]
         MODE_OFF = sys.argv[2]
         # OFFSETS = [int(sys.argv[3])]
-    print("mode: %s -- offsets: %s %s" % (MODE, MODE_OFF, OFFSETS))
-
-    dataset = LmDataset(base_path=PATH_LM)
+        SCENES = dataset.objlist[1:] if len(sys.argv) == 3 else [int(sys.argv[3])]
+        PLOT = False
+    print("mode: %s -- offsets: %s %s -- scenes: %s" % (MODE, MODE_OFF, OFFSETS, SCENES))
 
     df = None
     durations = []
 
     # if MODE != "BASE" or REF_MODE == "ICP":
-    renderer = Renderer(dataset)
+    renderer = Renderer(dataset, recompute_normals=USE_NORMALS)
     Verefine.RENDERER = renderer
         # renderer.create_egl_context()
 
@@ -121,8 +129,7 @@ if __name__ == "__main__":
 
     # loop over scenes...
     objects = []
-    scenes = dataset.objlist[1:]
-    for scene in scenes:
+    for scene in SCENES:
         print("scene %i..." % scene)
 
         class_id = dataset.objlist.index(scene)
@@ -175,17 +182,6 @@ if __name__ == "__main__":
             frame_camera = scene_camera[str(frame)]
 
             camera_intrinsics = np.array(frame_camera["cam_K"]).reshape(3, 3)
-            plane_detector = PlaneDetector(640, 480, camera_intrinsics, down_scale=8)
-
-            # camera_extrinsics = np.matrix(np.eye(4))
-            # camera_extrinsics[:3, :3] = np.matrix(frame_camera["cam_R_w2c"]).reshape(3, 3)
-            # camera_extrinsics[:3, 3] = np.matrix(frame_camera["cam_t_w2c"]).T / 1000.0
-            try:
-                camera_extrinsics = plane_detector.detect(depth, labels==255)
-            except ValueError as ex:
-                print(ex)
-                print("skipping frame...")
-                continue
 
             if df is None:
                 if EST_MODE == "DF" or REF_MODE == "DF":
@@ -208,21 +204,63 @@ if __name__ == "__main__":
             pose[:3, 3] = np.array(pose_info['cam_t_m2c']).reshape(3, 1)/1000
             obj_poses = [pose]
 
+            if EXTRINSICS == "PLANE":
+                plane_detector = PlaneDetector(640, 480, camera_intrinsics, down_scale=8)
+
+                # camera_extrinsics = np.matrix(np.eye(4))
+                # camera_extrinsics[:3, :3] = np.matrix(frame_camera["cam_R_w2c"]).reshape(3, 3)
+                # camera_extrinsics[:3, 3] = np.matrix(frame_camera["cam_t_w2c"]).T / 1000.0
+                try:
+                    camera_extrinsics = plane_detector.detect(depth, labels == 255)
+                except ValueError as ex:
+                    print(ex)
+                    print("skipping frame...")
+                    continue
+            elif EXTRINSICS == "GT":
+                camera_extrinsics = pose.copy()
+                camera_extrinsics[:3, 3] = camera_extrinsics[:3, 3] + camera_extrinsics[:3, :3]*np.matrix([0.0, 0.0, dataset.obj_bot[scene-1]]).T
+            else:
+                raise ValueError("EXTRINSICS needs to be GT (from model) or PLANE (segmentation).")
+
             # TODO still a bit leaky -- check using fast.ai GPUMemTrace
             gc.collect()
             torch.cuda.empty_cache()
-
-            observation = {
-                "depth": depth,
-                "extrinsics": camera_extrinsics,
-                "intrinsics": camera_intrinsics
-            }
 
             obj_mask = labels == 255
             mask_ids = np.argwhere(labels == 255)
             obj_roi = scene_gt_info['%i' % frame][0]['bbox_obj']
             obj_roi = [0, 0, obj_roi[0], obj_roi[1], obj_roi[0] + obj_roi[2], obj_roi[1] + obj_roi[3]]
 
+            scene_depth = depth.copy()
+            scene_depth[obj_mask == 0] = 0
+
+            def estimate_normals(D):
+                D_px = D.copy() * camera_intrinsics[0, 0]  # from meters to pixels
+                # # Sobel
+                # dzdx = cv.Sobel(depth, cv.CV_64F, dx=1, dy=0, ksize=-1)  # difference
+                # dzdy = cv.Sobel(depth, cv.CV_64F, dx=0, dy=1, ksize=-1)  # step size of 1px
+                import cv2 as cv
+                # Prewitt
+                kernelx = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
+                kernely = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
+                dzdx = cv.filter2D(D_px, -1, kernelx)
+                dzdy = cv.filter2D(D_px, -1, kernely)
+                normal = np.dstack((-dzdx, -dzdy, D_px != 0.0))  # only where we have a depth value
+                n = np.linalg.norm(normal, axis=2)
+                n = np.dstack((n, n, n))
+                normal = np.divide(normal, n, where=(n != 0))
+                normal[n == 0] = 0.0
+                # plt.imshow((normal + 1) / 2)
+                # plt.show()
+                return normal
+
+            observation = {
+                "color": rgb,
+                "depth": scene_depth,  # TODO or depth?
+                "normals": estimate_normals(scene_depth/1000),
+                "extrinsics": camera_extrinsics,
+                "intrinsics": camera_intrinsics
+            }
 
             def get_bbox(posecnn_rois):
                 border_list = [-1, 40, 80, 120, 160, 200, 240, 280, 320, 360, 400, 440, 480, 520, 560, 600, 640,
@@ -436,7 +474,7 @@ if __name__ == "__main__":
                     for obj_hypotheses in hypotheses:
                         hypothesis = obj_hypotheses[0]  # only take best
 
-                        refinements += refiner_param[-3]
+                        refinements += refiner_param[-4]
                         q, t, c = ref.refine(*hypothesis.refiner_param)
 
                         hypothesis.transformation[:3, :3] = Rotation.from_quat(q).as_dcm()
@@ -445,13 +483,16 @@ if __name__ == "__main__":
                         final_hypotheses.append(hypothesis)
                     # print(refinements)
 
-                elif MODE == "PIR":
+                elif MODE in ["PIR", "MITASH"]:
                     # PIR
                     for obj_hypotheses in hypotheses:
                         hypothesis = obj_hypotheses[0]  # only take best
-                        phys_hypotheses = pir.refine(hypothesis)
 
-                        final_hypotheses.append(phys_hypotheses[-1])  # pick hypothesis after last refinement step
+                        if MODE == "PIR":
+                            phys_hypotheses = pir.refine(hypothesis)
+                            final_hypotheses.append(phys_hypotheses[-1])  # pick hypothesis after last refinement step
+                        else:  # MITASH
+                            final_hypotheses.append(pir.refine_mitash(hypothesis))
 
                 elif MODE == "BAB":
                     # BAB (with PIR)
@@ -462,6 +503,23 @@ if __name__ == "__main__":
 
                         bab = BudgetAllocationBandit(pir, observation, obj_hypotheses)
                         bab.refine_max()
+
+                        # # TODO debug plot
+                        if PLOT:
+                            for oi, hs in enumerate(bab.pool):
+                                for hi, h in enumerate(hs):
+                                    if h is None:
+                                        continue
+                                    plt.subplot(len(bab.pool), len(hs), oi * len(hs) + hi + 1)
+                                    # ren_d = h.render(bab.observation, 'depth')[1] * 1000
+                                    # vis = np.abs(ren_d - bab.observation['depth'])
+                                    # vis[ren_d == 0] = 0
+                                    ren_c = h.render(bab.observation, 'color')[0]
+                                    vis = ren_c/255*0.7 + rgb/255*0.3
+                                    plt.imshow(vis[h.roi[0]-50:h.roi[2]+50, h.roi[1]-50:h.roi[3]+50])
+                                    plt.title("%0.2f" % bab.fits[oi, hi])
+                            plt.show()
+
                         hypothesis, plays, fit = bab.get_best()
                         assert hypothesis is not None
                         final_hypotheses.append(hypothesis)
@@ -473,11 +531,6 @@ if __name__ == "__main__":
                     pass  # TODO this should be similar to mitash, just everything at scene level -> no BAB, adapt candidate generation
 
                 elif MODE == "VF":
-                    observation = {
-                        "depth": depth,
-                        "extrinsics": camera_extrinsics,
-                        "intrinsics": camera_intrinsics
-                    }
                     hypotheses_pool = dict()
                     for obj_hypotheses in hypotheses:
                         hypotheses_pool[obj_hypotheses[0].model] = obj_hypotheses
@@ -518,18 +571,19 @@ if __name__ == "__main__":
                 # plt.title("refined")
                 # plt.show()
 
-                # write results
-                for hypothesis in final_hypotheses:
-                    # with open("/home/dominik/projects/hsr-grasping/break/GT_lm-test.csv",
-                    #           'a') as file:
-                    # with open("/home/dominik/projects/hsr-grasping/break/%s%s%s%0.2d_lm-test.csv"
-                    with open("/home/dominik/projects/hsr-grasping/log/%s/%s%s%0.2d_lm-test.csv"
-                              % (MODE, "%i-" % Verefine.HYPOTHESES_PER_OBJECT if MODE=="BAB" else "", MODE_OFF, OFFSET), 'a') as file:
-                        parts = ["%0.2d" % scene, "%i" % frame, "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
-                                 " ".join(["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
-                                 " ".join(["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
-                                 "%0.3f" % durations[-1]]
-                        file.write(",".join(parts) + "\n")
+                # # write results
+                if not PLOT:
+                    for hypothesis in final_hypotheses:
+                        # with open("/home/dominik/projects/hsr-grasping/break/GT_lm-test.csv",
+                        #           'a') as file:
+                        # with open("/home/dominik/projects/hsr-grasping/break/%s%s%s%0.2d_lm-test.csv"
+                        with open("/home/dominik/projects/hsr-grasping/log/%s/%s%s%0.2d_lm-test.csv"
+                                  % (MODE, "%i-" % Verefine.HYPOTHESES_PER_OBJECT if MODE=="BAB" else "", MODE_OFF, OFFSET), 'a') as file:
+                            parts = ["%0.2d" % scene, "%i" % frame, "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
+                                     " ".join(["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
+                                     " ".join(["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
+                                     "%0.3f" % durations[-1]]
+                            file.write(",".join(parts) + "\n")
             # break
         # break
 

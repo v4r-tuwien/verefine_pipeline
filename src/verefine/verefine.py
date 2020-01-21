@@ -63,8 +63,9 @@ def fit(observation, rendered, unexplained):
     depth_obs = observation['depth']
     depth_ren = rendered[1] * 1000  # in mm TODO or do this in renderer?
 
-    # mask = np.logical_and(mask, depth_ren>0)#np.logical_and(mask, np.logical_and(depth_ren > 0, depth_obs > 0))# TODO or just
-    mask = depth_ren>0
+    # mask = np.logical_and(depth_ren > 0, depth_obs > 0)# TODO or just np.logical_and(mask, depth_ren>0)#
+    # mask = depth_ren>0
+    mask = np.logical_or(depth_ren>0, depth_obs>0)  # TODO if depth_obs is already masked
     if unexplained is not None:
         mask = np.logical_and(unexplained, mask)  #depth_ren>0#
 
@@ -86,13 +87,17 @@ def fit(observation, rendered, unexplained):
     # # cos fit
     # norm_obs = observation['normals']
     # norm_ren = rendered[3]
+    # # plt.imshow((norm_ren+1)/2)
+    # # plt.show()
     # on = norm_obs[cos_mask].reshape(cos_mask.sum(), 3)
     # rn = norm_ren[cos_mask].reshape(cos_mask.sum(), 3)
     # cos = np.einsum('ij,ij->i', on, rn)
     # cos[cos < 0] = 0  # clamp to zero
-    # cos_fit = np.mean(cos)  # TODO or also linear until threshold?
-    #
-    # # Aldoma
+    # # cos_fit = np.mean(cos)  # TODO or also linear until threshold?
+    # # print("cos =%0.2f" % np.mean(cos))
+    # # print("dist=%0.2f" % (1-delta))
+    # #
+    # # # Aldoma
     # assert depth_mask.shape[0] == cos_mask.shape[0]
     # aldoma_delta = (1 - dist/TAU) * cos
     # aldoma_delta[dist > TAU] = 0
@@ -177,16 +182,17 @@ class Hypothesis:
         :return:
         """
 
-        # # a) render depth, compute score on CPU
-        # rendered = self.render(observation, mode='depth')#+normal')
-        # # unexplained = np.ones_like(self.mask)# TODO self.mask
-        # # for hs in fixed:
-        # #     h_mask = hs[0].render(observation, mode='depth+seg')[2]
-        # #     unexplained[h_mask > 0] = 0
-        # score = fit(observation, rendered, unexplained)
+        # a) render depth, compute score on CPU
+        rendered = self.render(observation, mode='depth')#+normal')
+        # rendered[0] = self.render(observation, mode='color')[0]
+        # unexplained = np.ones_like(self.mask)# TODO self.mask
+        # for hs in fixed:
+        #     h_mask = hs[0].render(observation, mode='depth+seg')[2]
+        #     unexplained[h_mask > 0] = 0
+        score = fit(observation, rendered, unexplained)
 
         # b) render depth, compute score on GPU  TODO has a bug when object is too far off
-        _, score = self.render(observation, "cost")
+        # _, score = self.render(observation, "cost")
 
         return score
 
@@ -253,8 +259,9 @@ class PhysIR:
             #     self.simulator.unfix()
 
             # just use the rotation -- both are in camera system, so do not need to change the offset
+            # TODO change in simulate() as well!
             hypothesis.transformation[:3, :3] = T_phys[:3, :3]  # only R
-            # hypothesis.transformation = T_phys.copy()
+            # hypothesis.transformation = T_phys.copy()  # full trafo
             # hypothesis.confidence = disp_t * disp_q
 
             physics_hypotheses.append(hypothesis.duplicate())
@@ -278,6 +285,39 @@ class PhysIR:
             # print("%0.1fms" % ((time.time() - st) * 1000))
         return physics_hypotheses
 
+    def refine_mitash(self, hypothesis, override_iterations=-1, explained=None):
+        """
+        like in Mitash et al. -> refine using all iterations, then physics, take full trafo from physics as result
+        :param hypothesis:
+        :return:
+        """
+
+        # TODO check if this is correct
+        if override_iterations != -1:
+            hypothesis.refiner_param[-4] = override_iterations
+
+        self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
+        self.simulator.reset_objects()
+
+        # === DF
+        hypothesis.refiner_param[6] = [Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat(),
+                                       np.array(hypothesis.transformation[:3, 3]).T[0], 1.0]
+        hypothesis.refiner_param[10] = explained
+
+        q, t, _ = self.refiner.refine(*hypothesis.refiner_param)
+        hypothesis.transformation[:3, :3] = Rotation.from_quat(q).as_dcm()
+        hypothesis.transformation[:3, 3] = t.reshape(3, 1)
+
+        # === PHYSICS
+        # on LM: 5ms, 100 * (iteration+1) steps, just use rotation
+        solution = [[hypothesis]] + self.fixed
+        self.simulator.initialize_solution(solution)
+
+        T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1/60.0, steps=60)
+        hypothesis.transformation = T_phys.copy()  # full trafo
+
+        return hypothesis
+
     def simulate(self, hypothesis):
         self.simulator.objects_to_use = [hypothesis.id] + [fix[0].id for fix in self.fixed]
         self.simulator.reset_objects()
@@ -292,7 +332,7 @@ class PhysIR:
         #         self.simulator.fix_hypothesis(fix[0])
 
         T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1 / 60.0,
-                                                   steps=3)  # 3 are equivalent to 10x5ms (paper)
+                                                   steps=60)  # 3 are equivalent to 10x5ms (paper)
 
         # compute displacement (0... high, 1... no displacement) TODO consider all objects or just new one?
         max_displacement = 9.81 * (3/60.0)**2  # [m]
@@ -300,7 +340,7 @@ class PhysIR:
         disp_q = max(0.0, np.dot(Rotation.from_dcm(T_phys[:3, :3]).as_quat(),
                                  Rotation.from_dcm(hypothesis.transformation[:3, :3]).as_quat()))
 
-        return disp_q * disp_t
+        return disp_q * disp_t, T_phys
 
 
 # ================================================================
@@ -317,7 +357,9 @@ class BudgetAllocationBandit:
         self.pir = pir
         self.observation = observation
 
-        self.pool = [[h] for h in hypotheses + [None] * len(hypotheses)]  # for the phys hypotheses
+        self.pool = [[h] for h in hypotheses]# + [None] * len(hypotheses)]  # for the phys hypotheses
+        if not isinstance(self.pool[0], list):
+            self.pool = [self.pool]
         self.max_iter = ITERATIONS * len(hypotheses) + len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
 
 
@@ -349,18 +391,29 @@ class BudgetAllocationBandit:
 
         self.factor = 0.0  # e.g. 0.1 -> at most 0.1 change in reward due to stability -- 0 for DF, >0 for PCS
 
-        arms = len(hypotheses)
-        self.fits = np.zeros((arms * 2, self.max_iter + 1))
+        self.arms = len(hypotheses)
+        self.fits = np.zeros((self.arms, self.max_iter))#TODO was self.max_iter + 1))
         # self.pir.fixed = fixed
         for hi, h in enumerate(hypotheses):
             stability = 0.0#self.pir.simulate(h) * self.factor if self.factor > 0 else 0.0
-            self.fits[hi] = h.fit(observation, unexplained=unexplained) * (1.0 - self.factor) + stability
+            self.fits[hi, 0] = h.fit(observation, unexplained=unexplained) * (1.0 - self.factor) + stability
+
+            _, T_phys = self.pir.simulate(h)
+            h_phys = h.duplicate()
+            # h_phys.transformation[:3, :3] = T_phys[:3, :3]  # TODO change in refine as well
+            h_phys.transformation = T_phys.copy()
+            fit = h_phys.fit(observation, unexplained=unexplained)
+            # self.pool[hi+len(hypotheses)][0] = h_phys
+            # self.fits[hi+len(hypotheses), 0] = fit
+            if fit > self.fits[hi, 0]:
+                self.pool[hi] = [h_phys]
+                self.fits[hi] = fit
         # self.pir.fixed = []
 
-        self.plays = [1] * arms
+        self.plays = [1] * self.arms
         self.rewards = [fit for fit in self.fits[:, 0]]  # init reward with fit of initial hypothesis
 
-        self.active = np.ones(arms)
+        self.active = np.ones(self.arms)
 
     # TODO caller has to handle the fixing of the environment
     def refine(self, fixed=[], unexplained=None):
@@ -368,11 +421,13 @@ class BudgetAllocationBandit:
         if iteration < self.max_iter:
             # SELECT
             c = 1e-3 # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
+
+            # assert (self.rewards == self.fits[:,:iteration].mean(axis=1)).sum() == iteration
             ucb_scores = [r + np.sqrt(c) * np.sqrt(np.log(iteration) / n) for r, n in zip(self.rewards, self.plays)]
 
             ucb_scores = np.array(ucb_scores)
-            if self.active.sum() > 0:
-                ucb_scores[self.active==0] = -1
+            # if self.active.sum() > 0:
+            #     ucb_scores[self.active==0] = -1
 
             hi = np.argmax(ucb_scores)
 
@@ -386,7 +441,12 @@ class BudgetAllocationBandit:
             # SIMULATOR.objects_to_use.append(child.id)
             physics_hypotheses = self.pir.refine(child, override_iterations=1, explained=fixed)
             # SIMULATOR.objects_to_use = SIMULATOR.objects_to_use[:-1]
-            physics_child = physics_hypotheses[-2]  # after last refinement step TODO was [0] - bc child was overwritten in refine?
+            # physics_child = physics_hypotheses[-2]  # after last refinement step TODO was [0] - bc child was overwritten in refine?
+            _, T_phys = self.pir.simulate(child)
+            physics_child = child.duplicate()
+            # h_phys.transformation[:3, :3] = T_phys[:3, :3]  # TODO change in refine as well
+            physics_child.transformation = T_phys.copy()
+
             child = physics_hypotheses[-1]
 
             # REWARD  # TODO render fixed hypotheses as well? but cost only for object -- stimulate with fixed!
@@ -398,27 +458,46 @@ class BudgetAllocationBandit:
             reward_phys = physics_child.fit(self.observation, unexplained=unexplained) * (1.0 - self.factor) + stability_phys
             physics_child.confidence = reward_phys
 
+            if reward_phys > reward:
+                reward = reward_phys
+                child = physics_child
+
             # BACKPROPAGATE
-            self.fits[hi][self.plays[hi]] = reward
-            self.fits[hi + len(self.plays)][self.plays[hi]] = reward_phys
-            self.pool[hi].append(child)  # hypothesis after physics + refine
-            self.pool[hi + len(self.plays)].append(physics_child)  # hypothesis after physics
+            self.fits[hi%self.arms][self.plays[hi%self.arms]] = reward
+            # self.fits[hi%self.arms+self.arms][self.plays[hi%self.arms]] = reward_phys
+            self.pool[hi%self.arms].append(child)  # hypothesis after physics + refine
+            # self.pool[hi%self.arms+self.arms].append(physics_child)  # hypothesis after physics
 
-            self.rewards[hi] = (self.rewards[hi] * float(self.plays[hi]) + reward) / (
-                        self.plays[hi] + 1.0)  # running mean
+            self.rewards[hi%self.arms] = (self.rewards[hi%self.arms] * float(self.plays[hi%self.arms]) + reward) / (
+                        self.plays[hi%self.arms] + 1.0)  # running mean
+            # self.rewards[hi%self.arms+self.arms] = (self.rewards[hi%self.arms+self.arms] * float(
+            #     self.plays[hi % self.arms]) + reward_phys) / (
+            #                                        self.plays[hi%self.arms] + 1.0)  # running mean
 
-            self.plays[hi] += 1
+            self.plays[hi%self.arms] += 1
             self.pir.fixed = []  # reset s.t. at any time original state is retained
 
-            # TODO should deactivate?
-            if self.fits[hi][self.plays[hi]-1] - self.fits[hi][self.plays[hi]-2] <= 0:
-                self.active[hi] = 0
+            # TODO adapt to new fits layout
+            # if self.fits[hi][self.plays[hi]-1] - self.fits[hi][self.plays[hi]-2] <= 0:
+            #     self.active[hi] = 0
 
     def refine_max(self, fixed=[], unexplained=None):
         for iteration in range(self.max_iter - np.sum(self.plays)):  # reduce by already played refinements
             self.refine(fixed, unexplained=unexplained)
 
     def get_best(self):
+        # # TODO debug plot
+        # for oi, hs in enumerate(self.pool):
+        #     for hi, h in enumerate(hs):
+        #         if h is None:
+        #             continue
+        #         plt.subplot(len(self.pool), len(hs), oi * len(hs) + hi + 1)
+        #         ren_d = h.render(self.observation, 'depth')[1] * 1000
+        #         vis = np.abs(ren_d - self.observation['depth'])
+        #         vis[ren_d == 0] = 0
+        #         plt.imshow(vis[h.roi[0]:h.roi[2], h.roi[1]:h.roi[3]])
+        #         plt.title("%0.2f" % self.fits[oi, hi])
+
         # select best fit and add it to final solution
         best_hi, best_ri = np.unravel_index(self.fits.argmax(), self.fits.shape)
 
