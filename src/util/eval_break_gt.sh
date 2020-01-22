@@ -4,7 +4,7 @@ HL='\033[1;32m'  # highlight
 NC='\033[0m' # No Color
 
 scenes=(1 2 4 5 6 8 9 10 11 12 13 14 15)
-modes="PIR BAB MITASH"  # "BASE PIR BAB"
+modes="BAB"  #"PIR BAB MITASH"  # "BASE PIR BAB"
 for mode in $modes
 do
 

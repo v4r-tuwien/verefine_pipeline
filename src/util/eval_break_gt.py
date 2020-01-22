@@ -43,7 +43,7 @@ PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
 PATH_LM = "/mnt/Data/datasets/SIXD/LM_LM-O/"
 PATH_LM_ROOT = '/mnt/Data/datasets/Linemod_preprocessed/'
 
-MODE = "MITASH"  # "BASE", "PIR", "BAB", "SV", "VF", MITASH
+MODE = "BAB"  # "BASE", "PIR", "BAB", "SV", "VF", MITASH
 EST_MODE = "GT"  # "GT", "DF", "PCS"
 REF_MODE = "DF"  # "DF", "ICP"
 SEGMENTATION = "GT"  # GT, PCNN
@@ -51,12 +51,17 @@ EXTRINSICS = "GT"  # GT, PLANE
 TAU = 20
 TAU_VIS = 10  # [mm]
 
-# REPETITIONS = 2
+# BREAK IT
+# 1) initial pose
 MODE_OFF = "r"  # "t", "r"
-# TRANSLATION_OFF = 50  # [mm] offset +- in every axis individually -> 6 perturbed poses
-# ANGLE_OFF = 30  # degrees offset +- in every axis individually -> 6 perturbed poses
-# OFFSET = TRANSLATION_OFF if MODE_OFF == "t" else ANGLE_OFF
-OFFSETS = [5, 10, 15, 20, 30, 35, 40, 45, 50]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
+OFFSETS = [5]#[5, 10, 15, 20, 30, 35, 40, 45, 50]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
+# 2) depth noise
+MODE_NOISE = "sample"  # sample, patch, ""
+NOISE_SAMPLE_P = 0.4  # percentage of samples to be removed in mode "sample"
+NOISE_PATCH_P = 0.4  # percentage of the bbox size to use for the occlusion patch in mode "patch"
+NOISE_TOP_P = 0.4  # the top x% (w.r.t. object height) are cut-off in mode "top"
+
+
 SCENES = []
 
 PLOT = False
@@ -229,10 +234,85 @@ if __name__ == "__main__":
             obj_mask = labels == 255
             mask_ids = np.argwhere(labels == 255)
             obj_roi = scene_gt_info['%i' % frame][0]['bbox_obj']
-            obj_roi = [0, 0, obj_roi[0], obj_roi[1], obj_roi[0] + obj_roi[2], obj_roi[1] + obj_roi[3]]
 
             scene_depth = depth.copy()
             scene_depth[obj_mask == 0] = 0
+
+            # -- noisy depth
+            if MODE_NOISE == "sample":
+                # a) robustness - randomly remove n samples
+                num_ids = len(mask_ids)
+                noise_ids = mask_ids[np.random.choice(list(range(num_ids)), int(NOISE_SAMPLE_P * num_ids)), :]
+                scene_depth[noise_ids[:, 0], noise_ids[:, 1]] = 0
+            elif MODE_NOISE == "patch":
+                # b) robustness - remove a contiguous blob, greedily grown from a random position on obj_mask
+                num_ids = len(mask_ids)
+                patch_center = mask_ids[np.random.randint(0, num_ids), :]
+
+
+                def grow(blob, cur_center, total_count, max_count):
+                    count = 0
+                    frontier = []
+                    pattern = []
+                    max_size = 1  # 1 for small square, 2 + if for circle
+                    for square_size in range(max_size + 1):
+                        for u in range(-square_size, square_size + 1):  # square
+                            for v in range(-square_size, square_size + 1):
+                                # if np.abs(u) == np.abs(
+                                #         v) and square_size == max_size:  # if max_size>1, makes it a circle
+                                #     continue
+                                pattern.append([u, v])
+                    # pattern = [[0, -1], [-1, 0], [1, 0], [0, 1]]  # small star
+                    for u, v in pattern:
+                        if total_count + count + 1 > max_count:
+                            break
+                        new_center = cur_center + [u, v]
+                        if (blob[new_center[0], new_center[1]] == 1 or
+                                obj_mask[new_center[0], new_center[1]] == 0):  # known or background
+                            continue
+                        blob[new_center[0], new_center[1]] = 1
+                        count += 1
+                        frontier.append(new_center)
+                    return count, frontier
+
+
+                def grow_frontier(blob, count, max_count, frontier):
+                    while count < max_count:
+                        new_frontier = []
+                        for new_center in frontier:
+                            if count < max_count:
+                                grow_count, grow_frontier = grow(blob, new_center, count, max_count)
+                                count += grow_count
+                                new_frontier += grow_frontier
+                        frontier = new_frontier.copy()
+                    return count, frontier
+
+
+                blob = np.zeros_like(obj_mask)
+                count = 0
+                frontier = [patch_center]
+                count, frontier = grow_frontier(blob, count=count, max_count=int(NOISE_SAMPLE_P * num_ids), frontier=frontier)
+                # plt.imshow(blob)
+                # plt.plot(patch_center[1], patch_center[0], 'rx')
+                # plt.title(str((blob > 0).sum()))
+
+                scene_depth[blob > 0] = 0
+            elif MODE_NOISE == "top":
+                # c) bias - remove same part of object -> check whether this "pushes" results in a direction (bias)
+                obs = depth.reshape(480, 640, 1)
+                #     obs[labels == 0] = 0  # makes results worse (with PCNN seg)
+                renderer.set_observation(obs)
+                cutoff_plane = camera_extrinsics.copy()
+                cutoff_plane[:3, 3] -= 2 * (
+                            camera_extrinsics[:3, :3] * np.matrix([0.0, 0.0, dataset.obj_bot[scene - 1]]).T) * (1-NOISE_TOP_P)
+                cutoff_mask = renderer.render([0], [cutoff_plane], camera_extrinsics, camera_intrinsics,
+                                                          mode='depth')[1] * 1000 >= depth
+                # plt.imshow(np.logical_and(obj_mask, np.logical_not(cutoff_mask)))
+                scene_depth[cutoff_mask > 0] = 0
+                # plt.imshow(scene_depth)
+                # plt.show()
+            # else: "" -> no artificial depth signal noise
+
 
             def estimate_normals(D):
                 D_px = D.copy() * camera_intrinsics[0, 0]  # from meters to pixels
@@ -303,6 +383,7 @@ if __name__ == "__main__":
                 return rmin, rmax, cmin, cmax
 
 
+            obj_roi = [0, 0, obj_roi[0], obj_roi[1], obj_roi[0] + obj_roi[2], obj_roi[1] + obj_roi[3]]
             vmin, vmax, umin, umax = get_bbox(obj_roi)
             obj_roi = [vmin, umin, vmax, umax]
 
@@ -439,7 +520,7 @@ if __name__ == "__main__":
                     # init frame
                     simulator.initialize_frame(camera_extrinsics)
                 # if MODE != "BASE" or REF_MODE == "ICP":
-                obs = depth.reshape(480, 640, 1)
+                obs = depth.reshape(480, 640, 1)  # TODO scene depth!
                 #     obs[labels == 0] = 0  # makes results worse (with PCNN seg)
                 renderer.set_observation(obs)
 
