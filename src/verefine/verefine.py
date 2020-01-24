@@ -30,7 +30,7 @@ TRACK_CONVERGENCE = False  # get best hypotheses at each iteration of SV (1 iter
 C = 1  # TODO was 1e-1
 
 ALL_OBJECTS = True
-HYPOTHESES_PER_OBJECT = 1
+HYPOTHESES_PER_OBJECT = 5
 ITERATIONS = 2
 REFINEMENTS_PER_ITERATION = 1
 BUDGET_SCALE = 1 if not ALL_OBJECTS else 3  # scales max iterations of verification (1... nobject * max iter per object -> one wrong node and we cannot refine all)
@@ -420,7 +420,7 @@ class BudgetAllocationBandit:
         iteration = np.sum(self.plays)
         if iteration < self.max_iter:
             # SELECT
-            c = 1e-3 # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
+            c = np.sqrt(2)  # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
 
             # assert (self.rewards == self.fits[:,:iteration].mean(axis=1)).sum() == iteration
             ucb_scores = [r + np.sqrt(c) * np.sqrt(np.log(iteration) / n) for r, n in zip(self.rewards, self.plays)]

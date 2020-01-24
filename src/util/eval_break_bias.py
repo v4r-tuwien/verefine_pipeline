@@ -44,7 +44,7 @@ if __name__ == "__main__":
     dataset = LmDataset(base_path=PATH_LM)
     SCENES = dataset.objlist[1:]
 
-    with open("/home/dominik/projects/hsr-grasping/log/BAB_sim60_gt-plane/1-t05_lm-test.csv", 'r') as file:
+    with open("/home/dominik/projects/hsr-grasping/log/BAB_top0.7/1-t05_lm-test.csv", 'r') as file:
         hypotheses = file.readlines()
 
     # get all test targets
@@ -120,8 +120,8 @@ if __name__ == "__main__":
             gt_in_world = camera_extrinsics.I * pose_gt
             est_in_world = camera_extrinsics.I * pose_est
 
-            t_err = np.linalg.norm(gt_in_world[:3, 3] - est_in_world[:3, 3])*1000  # TODO normalize / (-2*dataset.obj_bot[scene-1])
-            z_err = np.abs(gt_in_world[2, 3] - est_in_world[2, 3])*1000  # TODO normalize / (-2*dataset.obj_bot[scene-1])
+            t_err = np.linalg.norm(gt_in_world[:3, 3] - est_in_world[:3, 3]) / (-2*dataset.obj_bot[scene-1])
+            z_err = np.abs(gt_in_world[2, 3] - est_in_world[2, 3]) / (-2*dataset.obj_bot[scene-1])
             r_err = np.rad2deg(np.arccos(np.dot(Rotation.from_dcm(gt_in_world[:3, :3]).as_quat(),
                                                 Rotation.from_dcm(est_in_world[:3, :3]).as_quat())))
 
@@ -129,6 +129,8 @@ if __name__ == "__main__":
             z_errs.append(z_err)
             r_errs.append(r_err)
 
-    print("t-err [mm]:  mean=%0.3f, std=%0.3f, n=%i" % (np.mean(t_errs), np.std(t_errs), len(t_errs)))
-    print("z-err [mm]:  mean=%0.3f, std=%0.3f, n=%i" % (np.mean(z_errs), np.std(z_errs), len(z_errs)))
+    #print("t-err [mm]:  mean=%0.3f, std=%0.3f, n=%i" % (np.mean(t_errs)*1000, np.std(t_errs)*1000, len(t_errs)))
+    #print("z-err [mm]:  mean=%0.3f, std=%0.3f, n=%i" % (np.mean(z_errs)*1000, np.std(z_errs)*1000, len(z_errs)))
+    print("t-err [%%]:  mean=%0.3f, std=%0.3f, n=%i" % (np.mean(t_errs) * 100, np.std(t_errs) * 100, len(t_errs)))
+    print("z-err [%%]:  mean=%0.3f, std=%0.3f, n=%i" % (np.mean(z_errs) * 100, np.std(z_errs) * 100, len(z_errs)))
     print("r-err [deg]: mean=%0.3f, std=%0.3f, n=%i" % (np.mean(r_errs), np.std(r_errs), len(r_errs)))

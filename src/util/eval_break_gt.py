@@ -43,7 +43,7 @@ PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
 PATH_LM = "/mnt/Data/datasets/SIXD/LM_LM-O/"
 PATH_LM_ROOT = '/mnt/Data/datasets/Linemod_preprocessed/'
 
-MODE = "BAB"  # "BASE", "PIR", "BAB", "SV", "VF", MITASH
+MODE = "ALLON"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi
 EST_MODE = "GT"  # "GT", "DF", "PCS"
 REF_MODE = "DF"  # "DF", "ICP"
 SEGMENTATION = "GT"  # GT, PCNN
@@ -54,12 +54,12 @@ TAU_VIS = 10  # [mm]
 # BREAK IT
 # 1) initial pose
 MODE_OFF = "r"  # "t", "r"
-OFFSETS = [5]#[5, 10, 15, 20, 30, 35, 40, 45, 50]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
+OFFSETS = [25]#[5, 10, 15, 20, 30, 35, 40, 45, 50]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
 # 2) depth noise
-MODE_NOISE = "sample"  # sample, patch, ""
-NOISE_SAMPLE_P = 0.4  # percentage of samples to be removed in mode "sample"
-NOISE_PATCH_P = 0.4  # percentage of the bbox size to use for the occlusion patch in mode "patch"
-NOISE_TOP_P = 0.4  # the top x% (w.r.t. object height) are cut-off in mode "top"
+MODE_NOISE = ""  # top, sample, patch, ""
+NOISE_SAMPLE_P = 0.7  # percentage of samples to be removed in mode "sample"
+NOISE_PATCH_P = 0.7  # percentage of the bbox size to use for the occlusion patch in mode "patch"
+NOISE_TOP_P = 0.7  # the top x% (w.r.t. object height) are cut-off in mode "top"
 
 
 SCENES = []
@@ -267,6 +267,9 @@ if __name__ == "__main__":
                         if total_count + count + 1 > max_count:
                             break
                         new_center = cur_center + [u, v]
+                        if (new_center[0] < 0 or new_center[0] >= blob.shape[0] or
+                            new_center[1] < 0 or new_center[1] >= blob.shape[1]):
+                            continue
                         if (blob[new_center[0], new_center[1]] == 1 or
                                 obj_mask[new_center[0], new_center[1]] == 0):  # known or background
                             continue
@@ -336,7 +339,7 @@ if __name__ == "__main__":
 
             observation = {
                 "color": rgb,
-                "depth": scene_depth,  # TODO or depth?
+                "depth": scene_depth,
                 "normals": estimate_normals(scene_depth/1000),
                 "extrinsics": camera_extrinsics,
                 "intrinsics": camera_intrinsics
@@ -608,37 +611,27 @@ if __name__ == "__main__":
                         refinements += bab.max_iter - len(obj_hypotheses)  # don't count initial render
                     # print(refinements)
 
-                elif MODE == "SV":
-                    pass  # TODO this should be similar to mitash, just everything at scene level -> no BAB, adapt candidate generation
-
-                elif MODE == "VF":
-                    hypotheses_pool = dict()
+                elif MODE == "EVEN":  # spend refinement iterations evenly, select best based on score
                     for obj_hypotheses in hypotheses:
-                        hypotheses_pool[obj_hypotheses[0].model] = obj_hypotheses
-
-                    Verefine.OBSERVATION = observation
-                    final_hypotheses, final_fit, convergence_hypotheses = Verefine.verefine_solution(hypotheses_pool)
-
-                    # if Verefine.TRACK_CONVERGENCE:
-                    #     # # fill-up to 200 with final hypothesis
-                    #     # convergence_hypotheses += [final_hypotheses] * (200 - len(convergence_hypotheses))
-                    #
-                    #     # write results
-                    #     for convergence_iteration, iteration_hypotheses in convergence_hypotheses.items():
-                    #         iteration_hypotheses = [hs[0] for hs in iteration_hypotheses]
-                    #         for hypothesis in iteration_hypotheses:
-                    #             with open("/home/dominik/projects/hsr-grasping/convergence-vf5-c1/%0.3d_ycbv-test.csv"
-                    #                       % convergence_iteration, 'a') as file:
-                    #                 parts = ["%0.2d" % scene, "%i" % frame, "%i" % int(hypothesis.model),
-                    #                          "%0.3f" % hypothesis.confidence,
-                    #                          " ".join(
-                    #                              ["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
-                    #                          " ".join(
-                    #                              ["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
-                    #                          "%0.3f" % 1.0]
-                    #                 file.write(",".join(parts) + "\n")
-
-                    final_hypotheses = [hs[0] for hs in final_hypotheses]
+                        even_obj_hypotheses = []
+                        even_obj_scores = []
+                        for hypothesis in obj_hypotheses:
+                            phys_hypothesis = pir.refine(hypothesis)[-1]  # pick hypothesis after last refinement step
+                            even_obj_hypotheses.append(phys_hypothesis)
+                            even_obj_scores.append(phys_hypothesis.fit(observation))
+                        final_hypotheses.append(even_obj_hypotheses[int(np.argmax(even_obj_scores))])
+                elif MODE in ["ALLON", "BEST"]:
+                    for obj_hypotheses in hypotheses:
+                        allon_obj_scores = []
+                        for hypothesis in obj_hypotheses:
+                            allon_obj_scores.append(hypothesis.fit(observation))
+                        best_hypothesis = obj_hypotheses[int(np.argmax(allon_obj_scores))]
+                        if MODE == "ALLON":  # spend full budget
+                            pir_hypothesis = pir.refine(best_hypothesis, override_iterations=Verefine.ITERATIONS *
+                                                                                              len(obj_hypotheses))[-1]
+                        else:  # one full refinement (like BASE)
+                            pir_hypothesis = pir.refine(best_hypothesis)[-1]
+                        final_hypotheses.append(pir_hypothesis)
 
                 durations.append(time.time() - st)
 
@@ -652,7 +645,7 @@ if __name__ == "__main__":
                 # plt.title("refined")
                 # plt.show()
 
-                # # write results
+                # write results
                 if not PLOT:
                     for hypothesis in final_hypotheses:
                         # with open("/home/dominik/projects/hsr-grasping/break/GT_lm-test.csv",
