@@ -54,12 +54,12 @@ TAU_VIS = 10  # [mm]
 # BREAK IT
 # 1) initial pose
 MODE_OFF = "r"  # "t", "r"
-OFFSETS = [25]#[5, 10, 15, 20, 30, 35, 40, 45, 50]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
+OFFSETS = [5]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
 # 2) depth noise
-MODE_NOISE = ""  # top, sample, patch, ""
+MODE_NOISE = "top"  # top, sample, patch, ""
 NOISE_SAMPLE_P = 0.7  # percentage of samples to be removed in mode "sample"
 NOISE_PATCH_P = 0.7  # percentage of the bbox size to use for the occlusion patch in mode "patch"
-NOISE_TOP_P = 0.7  # the top x% (w.r.t. object height) are cut-off in mode "top"
+NOISE_TOP_P = 0.3  # the top x% (w.r.t. object height) are cut-off in mode "top"
 
 
 SCENES = []
@@ -316,6 +316,8 @@ if __name__ == "__main__":
                 # plt.show()
             # else: "" -> no artificial depth signal noise
 
+            ref_depth = scene_depth.copy()  # TODO always? or only for experiments?
+
 
             def estimate_normals(D):
                 D_px = D.copy() * camera_intrinsics[0, 0]  # from meters to pixels
@@ -395,10 +397,14 @@ if __name__ == "__main__":
             # _, _, _, emb, cloud = df.forward(rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id)  # TODO use this to generate hypotheses using DF
 
             if EST_MODE == "DF":
-                estimates, emb, cloud = df.estimate(rgb, depth, camera_intrinsics, obj_roi, obj_mask, class_id,
+                estimates, emb, cloud = df.estimate(rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id,
                                                     Verefine.HYPOTHESES_PER_OBJECT)
             elif REF_MODE == "DF":
-                _, _, _, emb, cloud = df.forward(rgb, depth, camera_intrinsics, obj_roi, obj_mask, class_id)
+                try:
+                    _, _, _, emb, cloud = df.forward(rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id)
+                except ZeroDivisionError:
+                    print("empty depth")
+                    continue
             else:
                 emb, cloud = None, None
 
@@ -425,7 +431,7 @@ if __name__ == "__main__":
                             obj_T[:3, :3] = Rotation.from_quat(estimate[0]).as_dcm()
                             obj_T[:3, 3] = estimate[1].reshape(3, 1)
                             obj_confidence = estimate[2]
-                            refiner_param = [rgb, depth, camera_intrinsics, obj_roi, obj_mask, class_id, estimate,
+                            refiner_param = [rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id, estimate,
                                              Verefine.ITERATIONS, emb, cloud, None]
                             new_hypotheses.append(Hypothesis("%0.2d" % scene, obj_T, obj_roi, obj_mask, None, None, hi,
                                                              obj_confidence, refiner_param=refiner_param))
@@ -506,7 +512,7 @@ if __name__ == "__main__":
                             new_obj_T[:3, :3] = new_rotation
                             new_obj_T[:3, 3] = new_translation
 
-                            refiner_param = [rgb, depth, camera_intrinsics, obj_roi, obj_mask, class_id, new_estimate,
+                            refiner_param = [rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id, new_estimate,
                                  Verefine.ITERATIONS, emb, cloud, None]
                             new_hypotheses.append(
                                 Hypothesis("%0.2d" % scene, new_obj_T.copy(), obj_roi, obj_mask, None, None, hi,
@@ -523,7 +529,7 @@ if __name__ == "__main__":
                     # init frame
                     simulator.initialize_frame(camera_extrinsics)
                 # if MODE != "BASE" or REF_MODE == "ICP":
-                obs = depth.reshape(480, 640, 1)  # TODO scene depth!
+                obs = ref_depth.reshape(480, 640, 1)  # TODO scene depth!
                 #     obs[labels == 0] = 0  # makes results worse (with PCNN seg)
                 renderer.set_observation(obs)
 

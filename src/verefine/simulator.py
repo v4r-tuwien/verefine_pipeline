@@ -237,7 +237,7 @@ class Simulator:
 
     # TODO 2 substeps faster, 4 more precise -- evaluate performance difference
     def simulate_no_render(self, obj_str, delta, steps, solver_iterations=10, sub_steps=4, fix_others=True):
-        pybullet.resetBasePositionAndOrientation(self.planeId, [0, 0, 0.0], [0, 0, 0, 1], self.world)
+        pybullet.resetBasePositionAndOrientation(self.planeId, [0, 0, 0], [0, 0, 0, 1], self.world)
         pybullet.setCollisionFilterGroupMask(self.planeId, -1, 1, 1)
 
         st = time.time()
@@ -250,11 +250,13 @@ class Simulator:
         if fix_others:
             for other_str in self.models.keys():
                 if other_str not in self.objects_to_use:
+                    # pybullet.setCollisionFilterGroupMask(self.models[other_str], -1, 0, 0)  # TODO why is this needed all of a sudden?
                     continue
                 if other_str != obj_str:
                     pybullet.changeDynamics(self.models[other_str], -1, mass=0.0)  # TODO should be 0 -- change "fix others" to get same result
+                    pybullet.setCollisionFilterGroupMask(self.models[other_str], -1, 1, 1)  # TODO why is this needed all of a sudden?
                 else:
-                    pybullet.changeDynamics(self.models[other_str], -1, mass=self.dataset.obj_masses[int(obj_str[:2])-1])
+                    pybullet.changeDynamics(self.models[other_str], -1, mass=1.0)#self.dataset.obj_masses[int(obj_str[:2])-1])
                     pybullet.setCollisionFilterGroupMask(self.models[other_str], -1, 1, 1)  # TODO why is this needed all of a sudden?
         elapsed_setup = time.time() - st
 

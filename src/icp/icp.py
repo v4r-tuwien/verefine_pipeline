@@ -162,7 +162,7 @@ class TrimmedIcp(Refiner):
         self.width, self.height = renderer.width, renderer.height
         self.umap = np.array([[j for _ in range(self.width)] for j in range(self.height)])
         self.vmap = np.array([[i for i in range(self.width)] for _ in range(self.height)])
-        self.num_samples = 0#100  # TODO how many samples required? --> 500 good on exAPC
+        self.num_samples = 100  # TODO how many samples required? --> 500 good on exAPC
 
     def depth_to_cloud(self, depth, intrinsics, label=None, roi=None):
 
@@ -220,7 +220,6 @@ class TrimmedIcp(Refiner):
             if cloud_obs.shape[0] == 0:
                 return estimate
 
-            cloud_obs2 = cloud_obs[np.random.choice(list(range(cloud_obs.shape[0])), 100), :]
             if explained is not None and len(explained) > 0:
                 cloud_exp = None
                 for h_ex in explained:
@@ -236,6 +235,11 @@ class TrimmedIcp(Refiner):
                 indices = exp_tree.query_ball_point(cloud_obs, r=0.008)
                 unexplained = [len(ind) == 0 for ind in indices]
                 cloud_obs2 = cloud_obs[unexplained]
+            else:
+                # cloud_obs2 = cloud_obs[np.random.choice(list(range(cloud_obs.shape[0])), self.num_samples), :]
+                cloud_obs2 = cloud_obs.copy()#
+            if cloud_obs2.shape[0] > 0:
+                cloud_obs2 = cloud_obs2[np.random.choice(list(range(cloud_obs2.shape[0])), self.num_samples), :]
 
             # TODO replace estimate with hypothesis -- then we can just call render method of h
             # create estimated point cloud (TODO could just load model point cloud once and transform it here)
@@ -245,13 +249,12 @@ class TrimmedIcp(Refiner):
             #                            np.matrix(np.eye(4)), intrinsics,
             #                            mode='depth')
             # cloud_ren = self.depth_to_cloud(rendered[1], intrinsics, rendered[1] > 0)
-            # cloud_ren = cloud_ren[np.random.choice(list(range(cloud_ren.shape[0])), 500), :]
 
             cloud_ren = np.dot(self.dataset.pcd[obj_id-1], obj_T[:3, :3].T) + obj_T[:3, 3].T
-            # if cloud_ren.shape[0] > 500:#self.num_samples:
+            # if cloud_ren.shape[0] > self.num_samples:
             #     cloud_ren = cloud_ren[np.random.choice(list(range(cloud_ren.shape[0])), self.num_samples), :]
 
-            if cloud_ren.shape[0] == 0:
+            if cloud_ren.shape[0] == 0 or cloud_obs2.shape[0] == 0:
                 TrimmedIcp.icp_durations.append(time.time() - st)
                 return estimate
 
@@ -281,11 +284,11 @@ class TrimmedIcp(Refiner):
             # T = reg_p2p.transformation
             # st = time.time()
             # c) using own python bindings to pcl
-            T = icp.tricp(cloud_obs2, cloud_ren, 1.0)
-            # TODO icp.icp (would this require normals? then we'd have to adapt the cpp code)
-            # print("%0.1fms" % ((time.time() - st) * 1000))
-            # -- apply trafo
+            T = icp.tricp(cloud_obs2, cloud_ren, 0.9)  # TODO 0.9 used by super4pcs+icp and cluster, 1.0 by MCTS
             obj_T = np.matrix(T).I * obj_T
+
+            # T = icp.tricp(cloud_ren, cloud_obs2, 0.99)
+            # obj_T = np.matrix(T) * obj_T
 
             # # TODO debug
             # new_rendered = self.renderer.render([obj_id], [obj_T],

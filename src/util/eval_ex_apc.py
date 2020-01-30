@@ -42,16 +42,17 @@ TODO
 """
 
 # settings
-PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline2_fixed-tab1.5-tricp1.0-250-30s_lcp/"
-PATH_APC_old = "/home/dominik/experiments/PhysimGlobalPose/src/dataset/"
+# PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset/"#_baseline3_mcts-60s-default/"#baseline2_fixed-tab1.5-tricp1.0-250-30s_lcp/"
+PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline3_mcts-60s-default/"
 
 POOL = "clusterPose"  # "allPose" for Super4PCS(?) ordered by LCP, "clusterPose" for cluster hypotheses (exactly 25), "super4pcs" for Super4PCS (best LCP), "search" for MCTS
 ALL_COSTS = True
-num_scenes = 30
+num_scenes = 42
+PLOT = False
 
-MODE = "BASE" if POOL in ["super4pcs", "search"] else "BAB"  # "BASE", "PIR", "BAB", "SV", "VF"
+MODE = "BASE" if POOL in ["super4pcs", "search"] else "VFlist"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
 EST_MODE = "PCS"
-REF_MODE = "" if POOL in ["search"] else "ICP"
+REF_MODE = "" if POOL in ["super4pcs", "search"] else "ICP"
 
 obj_names = {  # TODO start from 0 or 1?
     "crayola_24_ct": 1,
@@ -68,30 +69,34 @@ obj_names = {  # TODO start from 0 or 1?
 }
 
 # TODO dependency order in gt_info != hardcoded order in Mitash
-ind_mitash = [[1, 2], [1, 1, 1], [1, 2], [2, 1], [2, 1], [1, 2], [1, 2], [1, 2], [1, 2], [2, 1], [1, 2], [1, 2],
+# ind_mitash = [[1, 2], [1, 1, 1], [1, 2], [2, 1], [2, 1], [1, 2], [1, 2], [1, 2], [1, 2], [2, 1], [1, 2], [1, 2],
+#               [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2],
+#               [1, 1, 1], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2]]
+ind_mitash = [[1, 2], [1, 1, 1], [1, 2], [2, 1], [2, 1], [1, 2], [1, 2], [1, 1, 1], [1, 2], [1, 2], [1, 2], [1, 2],  # --12
               [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2],
               [1, 1, 1], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2]]
 ind = 0
 ind_1 = []
-for scene in range(1, num_scenes+1):
-    # with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
-    #     gt_info = yaml.load(file)
-    # for v in gt_info['scene']['dependency_order']:
-    #     v = len(v)
-    for v in ind_mitash[scene - 1]:
-        if v == 1:
-            ind_1.append(ind)
-        ind += v
-ind_2 = [ind for ind in range(num_scenes*3) if ind not in ind_1]  # indices start from 0
+# for scene in range(1, min(30, num_scenes)+1):
+#     # with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
+#     #     gt_info = yaml.load(file)
+#     # for v in gt_info['scene']['dependency_order']:
+#     #     v = len(v)
+#     for v in ind_mitash[scene - 1]:
+#         if v == 1:
+#             ind_1.append(ind)
+#         ind += v
+ind_2 = []#[ind for ind in range(min(num_scenes*3, 90)) if ind not in ind_1]  # indices start from 0
+ind_3 = []#list(range(90, min(num_scenes*3, 126)))
 
-if POOL == "search" and os.path.exists(PATH_APC + "scene-0001/duration.txt"):
-    times = []
-    for scene in range(1, num_scenes+1):
-        with open(PATH_APC + "scene-%0.4d/duration.txt" % scene, 'r') as file:
-            t = file.readlines()[-1]
-        parts = t.split(" ")
-        times.append([float(v.replace(" ", "").replace("\n", "")) for v in parts])
-    print("duration (search): %0.1f" % np.array(times)[:, 2].mean())
+# if POOL == "search" and os.path.exists(PATH_APC + "scene-0001/duration.txt"):
+#     times = []
+#     for scene in range(1, num_scenes+1):
+#         with open(PATH_APC + "scene-%0.4d/duration.txt" % scene, 'r') as file:
+#             t = file.readlines()[-1]
+#         parts = t.split(" ")
+#         times.append([float(v.replace(" ", "").replace("\n", "")) for v in parts])
+#     print("duration (search): %0.1f" % np.array(times)[:, 2].mean())
 
 
 def cost_ADD(model_points, T_gt, T_est, symmetric=False):
@@ -187,6 +192,8 @@ if __name__ == "__main__":
     dataset = ExApcDataset(base_path=PATH_APC)
     ref = None
     durations = []
+    # errors_translation, errors_rotation = [0]*90, [0]*90
+    # errors_ssd, errors_adi, errors_vsd = [0]*90, [0]*90, [0]*90
     errors_translation, errors_rotation = [], []
     errors_ssd, errors_adi, errors_vsd = [], [], []
 
@@ -196,7 +203,7 @@ if __name__ == "__main__":
         # renderer.create_egl_context()
 
     if MODE != "BASE":
-        simulator = Simulator(dataset, instances_per_object=25)
+        simulator = Simulator(dataset, instances_per_object=Verefine.HYPOTHESES_PER_OBJECT)
         Verefine.SIMULATOR = simulator
         pir = None
 
@@ -218,9 +225,15 @@ if __name__ == "__main__":
     # scenes = list(range(1, 36))  # all with annotated dependencies
     # scenes = list(range(1, 43))  # all scenes in dataset
     for scene in scenes:
+        # if scene < 31:  #> 30:#
+        #     errors_translation += [0, 0, 0]
+        #     errors_rotation += [0, 0, 0]
+        #     errors_ssd += [0, 0, 0]
+        #     errors_adi += [0, 0, 0]
+        #     errors_vsd += [0, 0, 0]
+        #     ind += 3
+        #     continue
         print("scene %i..." % scene)
-
-        unexplained = np.ones((480, 640), dtype=np.uint8)
 
         # gt info
         with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
@@ -233,15 +246,15 @@ if __name__ == "__main__":
         full_depth = depth.copy()
         scene_depth = np.array(PIL.Image.open(PATH_APC + "scene-%0.4d/debug_search/scene.png" % scene), dtype=np.uint16)  # table removed (as in Mitash)
         scene_depth = (scene_depth << 13 | scene_depth >> 3) / 10  # [mm]
-        depth = scene_depth
 
         # camera data
         camera_intrinsics = np.array(gt_info['camera']['camera_intrinsics'])
         camera_extrinsics = np.matrix(np.eye(4))
         # note: translation relative to table (rotation of table is always I)
         # camera_extrinsics[:3, 3] = np.matrix(gt_info['camera']['camera_pose'][:3]).T
-        camera_extrinsics[:3, 3] = (np.matrix(gt_info['camera']['camera_pose'][:3])
-                                    - np.matrix(gt_info['rest_surface']['surface_pose'][:3])).T  # [m]
+        camera_extrinsics[:3, 3] = (np.matrix(gt_info['camera']['camera_pose'][:3])).T
+        if POOL == "clusterPose":
+            camera_extrinsics[:3, 3] -= np.matrix(gt_info['rest_surface']['surface_pose'][:3]).T  # [m]
         camera_q = gt_info['camera']['camera_pose'][3:]  # wxyz
         camera_q = camera_q[1:] + [camera_q[0]]  # xyzw
         camera_extrinsics[:3, :3] = Rotation.from_quat(camera_q).as_dcm()
@@ -249,31 +262,43 @@ if __name__ == "__main__":
 
         def estimate_normals(D):
             D_px = D.copy() * camera_intrinsics[0, 0]  # from meters to pixels
-            # # Sobel
+
+            import cv2 as cv
+
+            # inpaint missing depth values
+            D_px = cv.inpaint(D_px.astype(np.float32), np.uint8(D_px == 0), 3, cv.INPAINT_NS)
+            # blur
+            D_px = cv.GaussianBlur(D_px, (9, 9), sigmaX=10.0)
+
+            # get derivatives
+
+            # # 1) Sobel
             # dzdx = cv.Sobel(depth, cv.CV_64F, dx=1, dy=0, ksize=-1)  # difference
             # dzdy = cv.Sobel(depth, cv.CV_64F, dx=0, dy=1, ksize=-1)  # step size of 1px
-            import cv2 as cv
-            # Prewitt
+
+            # 2) Prewitt
             kernelx = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
             kernely = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
             dzdx = cv.filter2D(D_px, -1, kernelx)
             dzdy = cv.filter2D(D_px, -1, kernely)
+
+            # gradient ~ normal
             normal = np.dstack((-dzdx, -dzdy, D_px != 0.0))  # only where we have a depth value
             n = np.linalg.norm(normal, axis=2)
             n = np.dstack((n, n, n))
             normal = np.divide(normal, n, where=(n != 0))
+
+            # remove invalid values
             normal[n == 0] = 0.0
+            normal[D == 0] = 0.0
+
             # plt.imshow((normal + 1) / 2)
             # plt.show()
             return normal
 
-        observation = {
-            # "rgb": rgb,  # TODO debug
-            "depth": depth,
-            "normals": estimate_normals(depth/1000),
-            "extrinsics": camera_extrinsics,
-            "intrinsics": camera_intrinsics
-        }
+        scene_normals = estimate_normals(scene_depth / 1000)
+        # plt.imshow((1+scene_normals)/2)
+        # plt.show()
 
         # # to old format
         # with open(PATH_APC_old + "scene-%0.4d/cameraExtrinsic.txt" % scene, 'w') as file:
@@ -295,6 +320,7 @@ if __name__ == "__main__":
         obj_ids = []
         obj_gt_Ts = {}
         hypotheses = []
+        obj_depths = []
         n_obj = 0
 
         # TODO still a bit leaky -- check using fast.ai GPUMemTrace
@@ -317,8 +343,7 @@ if __name__ == "__main__":
 
             obj_gt_T = np.matrix(np.eye(4))  # in world coordinates
             # obj_gt_T[:3, 3] = np.matrix(obj_info['pose'][:3]).T
-            obj_gt_T[:3, 3] = (np.matrix(obj_info['pose'][:3])
-                               - np.matrix(gt_info['rest_surface']['surface_pose'][:3])).T
+            obj_gt_T[:3, 3] = (np.matrix(obj_info['pose'][:3])).T
             obj_q = obj_info['pose'][3:]  # wxyz
             obj_q = obj_q[1:] + [obj_q[0]]  # xyzw
             obj_gt_T[:3, :3] = Rotation.from_quat(obj_q).as_dcm()
@@ -330,6 +355,8 @@ if __name__ == "__main__":
 
             # obj_gt_T[:3, 3] = np.matrix(obj_info['pose'][:3]).T - obj_gt_T[:3, :3]*np.matrix(gt_info['rest_surface']['surface_pose'][:3]).T
             world_to_cam = camera_extrinsics.copy()
+            if POOL == "clusterPose":
+                world_to_cam[:3, 3] += np.matrix(gt_info['rest_surface']['surface_pose'][:3]).T  # [m]
             world_to_cam[:3, :3] = world_to_cam[:3, :3].T
             world_to_cam[:3, 3] = -world_to_cam[:3, :3] * world_to_cam[:3, 3]
             # world_to_cam = camera_extrinsics.I
@@ -351,7 +378,8 @@ if __name__ == "__main__":
             with open(path, 'r') as file:
                 obj_hypotheses = file.readlines()
 
-            if POOL not in ["super4pcs", "search"]:
+            if POOL == "clusterPose":#"#not in ["super4pcs", "search"]:
+                # add cluster hypotheses
                 with open(PATH_APC + "scene-%0.4d/debug_super4PCS/%s_%s.txt"
                           % (scene, POOL.replace("Pose", "Score"), obj_name), 'r') as file:
                     obj_hypotheses_scores = file.readlines()
@@ -359,8 +387,15 @@ if __name__ == "__main__":
                 score_order = np.argsort(obj_hypotheses_scores)[::-1]
                 obj_hypotheses_scores = [obj_hypotheses_scores[i] for i in score_order]
                 obj_hypotheses = [obj_hypotheses[i] for i in score_order]
+
+                # # add best super4pcs hypothesis (as in Mitash)
+                # path_super4pcs = PATH_APC + "scene-%0.4d/debug_super4PCS/super4pcs_%s.txt" % (scene, obj_name)
+                # with open(path, 'r') as file:
+                #     obj_hypotheses_super4pcs = file.readlines()
+                # obj_hypotheses = [obj_hypotheses_super4pcs[-1]] + obj_hypotheses
+                # obj_hypotheses_scores = [1.0] + obj_hypotheses_scores
             elif POOL:
-                obj_hypotheses = [obj_hypotheses[0 if POOL == "super4pcs" else -1]]  # super4pcs: 0 base, 1 w/ ICP; search: -1 is best
+                obj_hypotheses = [obj_hypotheses[-1]]  # super4pcs: 0 base, 1 w/ ICP; search: -1 is best
                 obj_hypotheses_scores = [1.0]
 
             # mask + roi
@@ -375,10 +410,11 @@ if __name__ == "__main__":
 
             obj_depth = scene_depth.copy()
             obj_depth[obj_mask == 0] = 0
+            obj_depths.append(obj_depth)
 
             # # scene_depth_down = None
             # # downsample and mask observed depth
-            # depth_pcd = ref.depth_to_cloud(scene_depth, camera_intrinsics, obj_mask)
+            # depth_pcd = ref.depth_to_cloud(obj_depth, camera_intrinsics, obj_mask)
             # import open3d as o3d
             # pcd, pcd_down = o3d.PointCloud(), o3d.PointCloud()
             # pcd.points = o3d.Vector3dVector(depth_pcd / 1000)
@@ -408,13 +444,13 @@ if __name__ == "__main__":
             scene_depth_down = np.array(pcd_seg)
             # print(scene_depth_down.shape)
             #
-            import open3d as o3d
-            pcd = o3d.PointCloud()
-            pcd.points = o3d.Vector3dVector(scene_depth_down)
-            pcd, ind = o3d.statistical_outlier_removal(pcd, 16, 1.0)
-            # pcd, ind = o3d.radius_outlier_removal(pcd, 4, 0.01)
-            scene_depth_down = np.array(pcd.points)
-            # print(scene_depth_down.shape)
+            # import open3d as o3d
+            # pcd = o3d.PointCloud()
+            # pcd.points = o3d.Vector3dVector(scene_depth_down)
+            # pcd, ind = o3d.statistical_outlier_removal(pcd, 16, 1.0)
+            # # pcd, ind = o3d.radius_outlier_removal(pcd, 4, 0.01)
+            # scene_depth_down = np.array(pcd.points)
+            # # print(scene_depth_down.shape)
 
 
             # hypotheses
@@ -440,7 +476,7 @@ if __name__ == "__main__":
                 estimate = [Rotation.from_dcm(obj_T[:3, :3]).as_quat(), obj_T[:3, 3], c]
 
                 # TODO depth, scene_depth or obj_depth?
-                refiner_param = [rgb, obj_depth, camera_intrinsics, None, obj_mask, obj_id, estimate,
+                refiner_param = [rgb, depth, camera_intrinsics, None, obj_mask, obj_id, estimate,
                                  Verefine.ITERATIONS, scene_depth_down, None, None]
                 new_hypotheses.append(
                     Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, obj_mask, None, None, hi, c,
@@ -451,7 +487,7 @@ if __name__ == "__main__":
             best_estimates = np.argsort(confidences)[::-1]#[:Verefine.HYPOTHESES_PER_OBJECT]  # TODO same number as above!
             hypotheses += [[new_hypotheses[idx] for idx in best_estimates]]
 
-            # --- vis
+            # # --- vis
             # obs = depth.reshape(480, 640, 1)
             # renderer.set_observation(obs)
             # for hypothesis in hypotheses[-1]:
@@ -507,37 +543,187 @@ if __name__ == "__main__":
 
                 final_hypotheses.append(phys_hypotheses[-1])  # pick hypothesis after last refinement step
 
-        elif MODE == "BAB":
+        elif MODE in ["BAB", "VFlist"]:
             # BAB (with PIR)
             refinements = 0
-            fixed = []
-            for hi, obj_hypotheses in enumerate(hypotheses):
-                is_dependent = (scene-1)*3+hi in ind_2
 
-                # obj_depth = depth.copy()
-                # obj_mask = obj_hypotheses[0].mask
-                # obj_depth[np.logical_not(obj_mask)] = 0
-                # observation = {
-                #     "depth": obj_depth,
-                #     "extrinsics": camera_extrinsics,
-                #     "intrinsics": camera_intrinsics
-                # }
+            with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
+                gt_info = yaml.load(file)
+            trees = gt_info['scene']['dependency_order']
 
-                # set according to actual number of hypotheses (could be less for PCS if we don't find enough)
-                Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(obj_hypotheses)
 
-                bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=(unexplained if is_dependent else None))
-                bab.refine_max(fixed=fixed, unexplained=(unexplained if is_dependent else None))
-                hypothesis, plays, fit = bab.get_best()
-                assert hypothesis is not None
+            #
+            #     if bla == 1:
+            #         trees = trees[::-1]
+
+            for tree in trees:
+
+                is_dependent = len(tree) > 1  # and MODE != "BAB"
+
                 if is_dependent:
-                    unexplained[hypothesis.render(observation, 'depth')[1] > 0] = 0
-                    fixed.append([hypothesis])
+                    if len(tree) == 2:
+                        ind_2 += [ind, ind + 1]
+                        ind += 2
+                        # final_hypotheses += [None, None]
+                        # continue
+                    else:
+                        ind_3 += [ind, ind + 1, ind + 2]
+                        ind += 3
+                        # final_hypotheses += [None, None, None]
+                        # continue
+                else:
+                    ind_1.append(ind)
+                    ind += 1
+                    # final_hypotheses.append(None)
+                    # continue
 
-                final_hypotheses.append(hypothesis)
+                unexplained = np.ones((480, 640), dtype=np.uint8) if is_dependent else None
+                fixed = []
 
-                refinements += bab.max_iter - len(obj_hypotheses)  # don't count initial render
-            # print(refinements)
+                for bla in range(1):
+
+                    for hi in tree:
+                        obj_hypotheses = hypotheses[hi-1]
+
+                        d = scene_depth.copy()
+                        # if hi > 0:
+                        # others = [j-1 for j in tree[:hi]]
+                        others = [j - 1 for j in tree if j != hi]
+                        mask_others = np.dstack(tuple(obj_depths))[:, :, others].sum(axis=2) > 0
+                        obj_depth = obj_depths[hi - 1].copy()
+                        unique_mask = np.logical_and(obj_depth > 0, mask_others)
+                        if (unique_mask > 0).sum() > (obj_depth > 0).sum() * 0.9:
+                            unique_mask = obj_depth == 0
+                        # d[unique_mask] = 0
+                        # plt.imshow(np.logical_and(obj_depth>0, np.logical_not(unique_mask>0)))
+                        # plt.show()
+
+                        # others_depth = np.ones_like(obj_depth)*1000
+                        # for fixed_depth in fixed_depths:
+                        #     others_depth[np.logical_and(others_depth>fixed_depth, fixed_depth > 0)] = fixed_depth[np.logical_and(others_depth>fixed_depth, fixed_depth > 0)]
+                        # others_depth[others_depth == 1000] = 0
+                        # plt.imshow(others_depth)
+                        # plt.show()
+
+                        observation = {
+                            # "rgb": rgb,  # TODO debug
+                            "depth": d,
+                            "normals": scene_normals,
+                            "extrinsics": camera_extrinsics,
+                            "intrinsics": camera_intrinsics,
+                            "mask_others": unique_mask,
+                            # "depth_others": others_depth
+                        }
+                        Verefine.OBSERVATION = observation
+                        renderer.set_observation(scene_depth.reshape(480, 640, 1))
+
+                        Verefine.fit_fn = Verefine.fit_multi if len(tree) > 1 else Verefine.fit_single  # TODO or by mask overlap? is_dependent does not work well...
+                        pir.fixed = fixed  # note: s.t. sim in initial BAB scoring is correct
+                        bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=unexplained)
+                        bab.refine_max(fixed=fixed, unexplained=unexplained)
+                        hypothesis, plays, fit = bab.get_best()
+                        assert hypothesis is not None
+                        if is_dependent:
+                            h_depth = hypothesis.render(observation, 'depth')[1]*1000
+                            # unexplained[np.logical_and(np.abs(h_depth - scene_depth) < 8, h_depth > 0)] = 0
+                            # h_depth[h_depth - scene_depth > 5] = 0
+                            h_depth[np.abs(h_depth - scene_depth) > 8] = 0
+                            # unexplained[h_depth>0] = 0
+                            obj_depths[hi-1] = h_depth.copy()
+                            fixed.append([hypothesis])
+                    #     # fixed_depths.append(h_depth)
+                        final_hypotheses.append(hypothesis)
+
+                        refinements += bab.max_iter - len(obj_hypotheses)  # don't count initial render
+
+            # observation = {
+            #     # "rgb": rgb,  # TODO debug
+            #     "depth": scene_depth,
+            #     "normals": scene_normals,
+            #     "extrinsics": camera_extrinsics,
+            #     "intrinsics": camera_intrinsics,
+            #     "mask_others": scene_depth == 0
+            # }
+            # # TODO improve accuracy of this selection (other masks) + take full scene for icp
+            # fin = []
+            # # Verefine.TAU = 5
+            # for i in range(3):
+            #     if final_hypotheses[i] is None or final_hypotheses[-(i+1)] is None:
+            #         fin.append(None)
+            #     else:
+            #         # fin.append(final_hypotheses[i] if final_hypotheses[i].confidence > final_hypotheses[-(i+1)].confidence
+            #         #            else final_hypotheses[-(i+1)])
+            #         # def dbg():
+            #         #     plt.subplot(1, 2, 1)
+            #         #     plt.imshow(final_hypotheses[i].render(observation, 'color')[0]/255*0.7 + rgb/255*0.3)
+            #         #     plt.subplot(1, 2, 2)
+            #         #     plt.imshow(final_hypotheses[-(i + 1)].render(observation, 'color')[0] / 255 * 0.7 + rgb / 255 * 0.3)
+            #         #     plt.title("chose left" if final_hypotheses[i].confidence > final_hypotheses[-(i+1)].confidence
+            #         #            else "chose right")
+            #         # drawnow(dbg)
+            #         # plt.pause(3.0)
+            #         Verefine.fit_fn = Verefine.fit_single
+            #         fin.append(
+            #             final_hypotheses[i] if final_hypotheses[i].fit(observation) > final_hypotheses[-(i + 1)].fit(observation)
+            #             else final_hypotheses[-(i + 1)])
+            # # Verefine.TAU = 30
+            # final_hypotheses = fin
+            # # # # # print(refinements)
+
+        # elif MODE == "BAB":
+        #     # BAB (with PIR)
+        #     refinements = 0
+        #
+        #     with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
+        #         gt_info = yaml.load(file)
+        #     for tree in gt_info['scene']['dependency_order']:
+        #
+        #         is_dependent = len(tree) > 1
+        #
+        #         for bab_iter in range(5):
+        #             unexplained = np.ones((480, 640), dtype=np.uint8) if is_dependent else None
+        #             fixed = []
+        #             new_hypotheses = []
+        #             for hi in tree:
+        #                 obj_hypotheses = hypotheses[hi-1]
+        #
+        #                 others = [j-1 for j in tree if j != hi]
+        #                 mask_others = np.dstack(tuple(obj_depths))[:, :, others].sum(axis=2) > 0
+        #                 obj_depth = obj_depths[hi - 1].copy()
+        #                 unique_mask = np.logical_and(obj_depth>0, mask_others)
+        #                 if (unique_mask > 0).sum() == 0:
+        #                     unique_mask = obj_depth > 0
+        #                 obj_depth[unique_mask] = 0
+        #
+        #                 observation = {
+        #                     # "rgb": rgb,  # TODO debug
+        #                     "depth": obj_depth,
+        #                     # "normals": estimate_normals(depth/1000),
+        #                     "extrinsics": camera_extrinsics,
+        #                     "intrinsics": camera_intrinsics
+        #                 }
+        #                 Verefine.OBSERVATION = observation
+        #                 renderer.set_observation(obj_depth.reshape(480, 640, 1))
+        #
+        #                 # set according to actual number of hypotheses (could be less for PCS if we don't find enough)
+        #                 Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(obj_hypotheses)
+        #
+        #                 bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=unexplained)
+        #                 for bab_ref in range(bab_iter**2):
+        #                     bab.refine(fixed=fixed, unexplained=unexplained)
+        #                 hypothesis, plays, fit = bab.get_best()
+        #                 if is_dependent:
+        #                     h_depth = hypothesis.render(observation, 'depth')[1]*1000
+        #                     unexplained[np.logical_and(np.abs(h_depth - scene_depth) < 8, h_depth > 0)] = 0
+        #                     fixed.append([hypothesis])
+        #
+        #                 new_candidates = bab.get_best_n(26)
+        #                 if bab_iter == 4 or len(new_candidates) == 0:
+        #                     final_hypotheses.append(hypothesis)
+        #                     new_hypotheses.append(obj_hypotheses)
+        #                 else:
+        #                     new_hypotheses.append(new_candidates)
+        #             hypotheses = new_hypotheses
 
         elif MODE == "SV":
             Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(
@@ -581,6 +767,14 @@ if __name__ == "__main__":
         errs_t, errs_r = [], []
         errs_ssd, errs_adi, errs_vsd = [], [], []
         for hypothesis in final_hypotheses:
+            if hypothesis is None:
+                errors_translation.append(0)
+                errors_rotation.append(0)
+                errors_ssd.append(0)
+                errors_adi.append(0)
+                errors_vsd.append(0)
+                continue
+
             obj_id = int(hypothesis.model)
             obj_gt_T = obj_gt_Ts[obj_id]
             obj_est_T = hypothesis.transformation
@@ -653,6 +847,12 @@ if __name__ == "__main__":
                 errors_adi.append(err_adi)
 
                 # 3) VSD
+                observation = {
+                    "depth": scene_depth,
+                    "normals": scene_normals,
+                    "extrinsics": camera_extrinsics,
+                    "intrinsics": camera_intrinsics
+                }
                 gt_depth = renderer.render([obj_id], [obj_gt_T], camera_extrinsics, camera_intrinsics, mode='depth')[1]
                 est_depth = hypothesis.render(observation, 'depth')[1]
                 err_vsd, gt_visibility = cost_VSD(full_depth, gt_depth*1000, est_depth*1000)
@@ -669,57 +869,62 @@ if __name__ == "__main__":
             print("   mean VSD = %0.1f" % np.mean(errs_vsd))
         # print("   refinement iterations = %i" % ref.ref_count)  # TODO
         #
-        # # --- vis
-        # vis = np.dstack((depth, depth, depth))/1000#
-        # vis = rgb.copy()
-        # rgb_ren = []
-        # for hypothesis in final_hypotheses:
-        #     rendered = hypothesis.render(observation, 'color')
-        #     rgb_ren.append(rendered[0])
-        #     # vis[rendered[0] != 0] = vis[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0]/255 * 0.7
-        #     vis[rendered[0] != 0] = vis[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0] * 0.7
-        # vis2 = rgb.copy()
-        # for obj_hypotheses in hypotheses:
-        #     rendered = obj_hypotheses[0].render(observation, 'color')
-        #     vis2[rendered[0] != 0] = vis2[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0] * 0.7
-        #
-        # obj_ids = [renderer.dataset.objlist.index(int(h.id[:2])) for h in
-        #            final_hypotheses]  # TODO do this conversion in renderer
-        # obj_trafos = [h.transformation for h in final_hypotheses]
-        # # TODO just pass a list of hypotheses alternatively
-        #
-        # # # a) render depth, compute score on CPU
-        # vis3 = depth - renderer.render(obj_ids, obj_trafos,
-        #                            camera_extrinsics, camera_intrinsics,
-        #                            mode='depth')[1]*1000
-        # vis3[scene_depth == 0] = 0
-        # # vis3[vis3 < -20] = 0
-        # # vis3[vis3 > 20] = 0
-        #
-        # def debug_draw():
-        #     plt.subplot(2, 2, 2)
-        #     plt.imshow(vis)
-        #     plt.subplot(2, 2, 1)
-        #     plt.imshow(vis2)
-        #     plt.subplot(2, 2, 3)
-        #     plt.imshow(depth/1000*255 + rgb[:,:,0])
-        #     plt.subplot(2, 2, 4)
-        #     plt.imshow(np.abs(vis3), vmin=0, vmax=20)
-        #     plt.title("mean abs depth error\n = %0.3f" % np.mean(np.abs(vis3[scene_depth>0])))
-        # # debug_draw()
-        # # plt.show()
-        # drawnow(debug_draw)
-        # # plt.pause(0.05)
-        # plt.pause(5.0)
+        # --- vis
+        if PLOT:
+            vis = np.dstack((depth, depth, depth))/1000#
+            vis = rgb.copy()
+            rgb_ren = []
+            for hypothesis in final_hypotheses:
+                if hypothesis is not None:
+                    rendered = hypothesis.render(observation, 'color')
+                    rgb_ren.append(rendered[0])
+                    # vis[rendered[0] != 0] = vis[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0]/255 * 0.7
+                    vis[rendered[0] != 0] = vis[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0] * 0.7
+            vis2 = rgb.copy()
+            for obj_hypotheses in hypotheses:
+                rendered = obj_hypotheses[0].render(observation, 'color')
+                vis2[rendered[0] != 0] = vis2[rendered[0] != 0] * 0.3 + rendered[0][rendered[0] != 0] * 0.7
+
+            obj_ids = [renderer.dataset.objlist.index(int(h.id[:2])) for h in
+                       final_hypotheses if h is not None]  # TODO do this conversion in renderer
+            obj_trafos = [h.transformation for h in final_hypotheses if h is not None]
+            # TODO just pass a list of hypotheses alternatively
+
+            # # a) render depth, compute score on CPU
+            vis3 = depth - renderer.render(obj_ids, obj_trafos,
+                                       camera_extrinsics, camera_intrinsics,
+                                       mode='depth')[1]*1000
+            vis3[scene_depth == 0] = 0
+            # vis3[vis3 < -20] = 0
+            # vis3[vis3 > 20] = 0
+
+            def debug_draw():
+                plt.subplot(2, 2, 2)
+                plt.imshow(vis)
+                plt.subplot(2, 2, 1)
+                # plt.imshow(vis2)
+                plt.imshow(np.array(PIL.Image.open(PATH_APC + "scene-%0.4d/debug_search/renderFinalClass.png" % scene)))
+                plt.subplot(2, 2, 3)
+                # plt.imshow(depth/1000*255 + rgb[:,:,0])
+                plt.imshow((scene_normals+1)/2)
+                # plt.imshow(unexplained)
+                plt.subplot(2, 2, 4)
+                plt.imshow(np.abs(vis3), vmin=0, vmax=20)
+                plt.title("mean abs depth error\n = %0.3f" % np.mean(np.abs(vis3[scene_depth>0])))
+            # debug_draw()
+            # plt.show()
+            drawnow(debug_draw)
+            # plt.pause(0.05)
+            plt.pause(1.0)
 
         print("   ---")
         print("   ~ icp/call=%0.1fms" % (np.mean(TrimmedIcp.icp_durations) * 1000))
-        if MODE not in ["BASE", "PIR"]:
+        if len(renderer.runtimes) > 0:#MODE not in ["BASE", "PIR"]:
             print("   ~ rendering/call=%0.1fms" % (np.mean(np.sum(renderer.runtimes, axis=1)) * 1000))
             print("   ~ cost/call=%0.1fms" % (np.mean(Verefine.cost_durations) * 1000))
         print("   ---")
         print("   ~ icp/frame=%ims" % (np.sum(TrimmedIcp.icp_durations) * 1000))
-        if MODE not in ["BASE", "PIR"]:
+        if len(renderer.runtimes) > 0:#MODE not in ["BASE", "PIR"]:
             print("   ~ rendering/frame=%ims" % (np.sum(np.sum(renderer.runtimes, axis=1)) * 1000))
             print("   ~ cost/frame=%ims" % (np.sum(Verefine.cost_durations) * 1000))
 
@@ -733,6 +938,9 @@ if __name__ == "__main__":
     print("1-obj err t [cm] = %0.1f" % (np.mean(np.array(errors_translation)[ind_1]) / 10))
     print("2-obj err r [deg] = %0.1f" % np.mean(np.array(errors_rotation)[ind_2]))
     print("2-obj err t [cm] = %0.1f" % (np.mean(np.array(errors_translation)[ind_2]) / 10))
+    if len(errors_translation) > 90:
+        print("3-obj err r [deg] = %0.1f" % np.mean(np.array(errors_rotation)[ind_3]))
+        print("3-obj err t [cm] = %0.1f" % (np.mean(np.array(errors_translation)[ind_3]) / 10))
     print("ALL err r [deg] = %0.1f" % np.mean(errors_rotation))
     print("ALL err t [cm] = %0.1f" % (np.mean(errors_translation)/10))
     print("------")
