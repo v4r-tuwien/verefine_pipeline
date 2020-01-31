@@ -10,8 +10,8 @@ from src.util.renderer import Renderer
 
 
 # # make reproducible (works up to BAB -- TODO VF smh not)
-# seed = 0
-# np.random.seed(seed)
+seed = 0
+np.random.seed(seed)
 
 
 class Icp(Refiner):
@@ -212,6 +212,9 @@ class TrimmedIcp(Refiner):
         obj_T[:3, 3] = t.reshape(3, 1)
 
         for iteration in range(iterations):
+            seed = 0
+            np.random.seed(seed)
+
             TrimmedIcp.ref_count += 1
             st = time.time()
 
@@ -238,8 +241,8 @@ class TrimmedIcp(Refiner):
             else:
                 # cloud_obs2 = cloud_obs[np.random.choice(list(range(cloud_obs.shape[0])), self.num_samples), :]
                 cloud_obs2 = cloud_obs.copy()#
-            if cloud_obs2.shape[0] > 0:
-                cloud_obs2 = cloud_obs2[np.random.choice(list(range(cloud_obs2.shape[0])), self.num_samples), :]
+            # if cloud_obs2.shape[0] > 0:
+            #     cloud_obs2 = cloud_obs2[np.random.choice(list(range(cloud_obs2.shape[0])), self.num_samples), :]
 
             # TODO replace estimate with hypothesis -- then we can just call render method of h
             # create estimated point cloud (TODO could just load model point cloud once and transform it here)
@@ -284,7 +287,7 @@ class TrimmedIcp(Refiner):
             # T = reg_p2p.transformation
             # st = time.time()
             # c) using own python bindings to pcl
-            T = icp.tricp(cloud_obs2, cloud_ren, 0.9)  # TODO 0.9 used by super4pcs+icp and cluster, 1.0 by MCTS
+            T = icp.tricp(cloud_obs2, cloud_ren, 0.99)  # TODO 0.9 used by super4pcs+icp and cluster, 1.0 by MCTS
             obj_T = np.matrix(T).I * obj_T
 
             # T = icp.tricp(cloud_ren, cloud_obs2, 0.99)

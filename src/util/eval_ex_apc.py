@@ -23,7 +23,7 @@ import random
 from src.util.fast_renderer import Renderer
 from src.util.dataset import ExApcDataset
 from src.verefine.simulator import Simulator
-from src.verefine.verefine import Hypothesis, PhysIR, BudgetAllocationBandit
+from src.verefine.verefine import Hypothesis, PhysIR, BudgetAllocationBandit, SceneBAB
 import src.verefine.verefine as Verefine
 from src.icp.icp import TrimmedIcp
 
@@ -42,15 +42,15 @@ TODO
 """
 
 # settings
-# PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset/"#_baseline3_mcts-60s-default/"#baseline2_fixed-tab1.5-tricp1.0-250-30s_lcp/"
-PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline3_mcts-60s-default/"
+PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset/"
+# PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline3_mcts-60s-default/"
 
 POOL = "clusterPose"  # "allPose" for Super4PCS(?) ordered by LCP, "clusterPose" for cluster hypotheses (exactly 25), "super4pcs" for Super4PCS (best LCP), "search" for MCTS
 ALL_COSTS = True
 num_scenes = 42
 PLOT = False
 
-MODE = "BASE" if POOL in ["super4pcs", "search"] else "VFlist"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
+MODE = "BASE" if POOL in ["super4pcs", "search"] else "BAB"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
 EST_MODE = "PCS"
 REF_MODE = "" if POOL in ["super4pcs", "search"] else "ICP"
 
@@ -76,18 +76,23 @@ ind_mitash = [[1, 2], [1, 1, 1], [1, 2], [2, 1], [2, 1], [1, 2], [1, 2], [1, 1, 
               [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2],
               [1, 1, 1], [1, 2], [1, 2], [1, 2], [1, 2], [1, 2]]
 ind = 0
-ind_1 = []
-# for scene in range(1, min(30, num_scenes)+1):
-#     # with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
-#     #     gt_info = yaml.load(file)
-#     # for v in gt_info['scene']['dependency_order']:
-#     #     v = len(v)
-#     for v in ind_mitash[scene - 1]:
-#         if v == 1:
-#             ind_1.append(ind)
-#         ind += v
-ind_2 = []#[ind for ind in range(min(num_scenes*3, 90)) if ind not in ind_1]  # indices start from 0
-ind_3 = []#list(range(90, min(num_scenes*3, 126)))
+if POOL in ["super4pcs", "search"]:
+    ind_1 = []
+    for scene in range(1, min(30, num_scenes)+1):
+        # with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
+        #     gt_info = yaml.load(file)
+        # for v in gt_info['scene']['dependency_order']:
+        #     v = len(v)
+        for v in ind_mitash[scene - 1]:
+            if v == 1:
+                ind_1.append(ind)
+            ind += v
+    ind_2 = [ind for ind in range(min(num_scenes*3, 90)) if ind not in ind_1]  # indices start from 0
+    ind_3 = list(range(90, min(num_scenes*3, 126)))
+else:
+    ind_1 = []
+    ind_2 = []
+    ind_3 = []
 
 # if POOL == "search" and os.path.exists(PATH_APC + "scene-0001/duration.txt"):
 #     times = []
@@ -192,8 +197,6 @@ if __name__ == "__main__":
     dataset = ExApcDataset(base_path=PATH_APC)
     ref = None
     durations = []
-    # errors_translation, errors_rotation = [0]*90, [0]*90
-    # errors_ssd, errors_adi, errors_vsd = [0]*90, [0]*90, [0]*90
     errors_translation, errors_rotation = [], []
     errors_ssd, errors_adi, errors_vsd = [], [], []
 
@@ -225,14 +228,14 @@ if __name__ == "__main__":
     # scenes = list(range(1, 36))  # all with annotated dependencies
     # scenes = list(range(1, 43))  # all scenes in dataset
     for scene in scenes:
-        # if scene < 31:  #> 30:#
-        #     errors_translation += [0, 0, 0]
-        #     errors_rotation += [0, 0, 0]
-        #     errors_ssd += [0, 0, 0]
-        #     errors_adi += [0, 0, 0]
-        #     errors_vsd += [0, 0, 0]
-        #     ind += 3
-        #     continue
+        if scene > 30:#< 31:  #
+            errors_translation += [0, 0, 0]
+            errors_rotation += [0, 0, 0]
+            errors_ssd += [0, 0, 0]
+            errors_adi += [0, 0, 0]
+            errors_vsd += [0, 0, 0]
+            ind += 3
+            continue
         print("scene %i..." % scene)
 
         # gt info
@@ -542,19 +545,59 @@ if __name__ == "__main__":
                 phys_hypotheses = pir.refine(hypothesis)
 
                 final_hypotheses.append(phys_hypotheses[-1])  # pick hypothesis after last refinement step
-
-        elif MODE in ["BAB", "VFlist"]:
-            # BAB (with PIR)
+        elif MODE == "BAB":
             refinements = 0
 
             with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
                 gt_info = yaml.load(file)
             trees = gt_info['scene']['dependency_order']
 
+            for ti, tree in enumerate(trees):
 
-            #
-            #     if bla == 1:
-            #         trees = trees[::-1]
+                # 1) individual isolated object -> run BABn
+                if len(tree) == 1:
+                    ind_1.append(ind)
+                    ind += 1
+                    # final_hypotheses.append(None)
+                    # continue
+                elif len(tree) == 2:
+                    ind_2 += [ind, ind + 1]
+                    ind += 2
+                    final_hypotheses += [None, None]
+                    continue
+                else:
+                    ind_3 += [ind, ind + 1, ind + 2]
+                    ind += 3
+                    final_hypotheses += [None, None, None]
+                    continue
+
+                for i, oi in enumerate(tree):
+                    obj_hypotheses = hypotheses[oi - 1]
+
+                    observation = {
+                        "depth": scene_depth,
+                        "normals": scene_normals,
+                        "extrinsics": camera_extrinsics,
+                        "intrinsics": camera_intrinsics
+                    }
+                    Verefine.OBSERVATION = observation
+                    renderer.set_observation(scene_depth.reshape(480, 640, 1))
+
+                    Verefine.fit_fn = Verefine.fit_single
+                    bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=None)
+                    bab.refine_max(fixed=[], unexplained=None)
+                    hypothesis, plays, fit = bab.get_best()
+                    assert hypothesis is not None
+                    final_hypotheses.append(hypothesis)
+
+                    refinements += bab.max_iter - len(obj_hypotheses)  # don't count initial render
+        elif MODE in ["VFlist"]:
+            # BAB (with PIR)
+            refinements = 0
+
+            with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
+                gt_info = yaml.load(file)
+            trees = gt_info['scene']['dependency_order']
 
             for tree in trees:
 
@@ -569,197 +612,241 @@ if __name__ == "__main__":
                     else:
                         ind_3 += [ind, ind + 1, ind + 2]
                         ind += 3
-                        # final_hypotheses += [None, None, None]
-                        # continue
+                        final_hypotheses += [None, None, None]
+                        continue
                 else:
                     ind_1.append(ind)
                     ind += 1
-                    # final_hypotheses.append(None)
-                    # continue
+                    final_hypotheses.append(None)
+                    continue
 
                 unexplained = np.ones((480, 640), dtype=np.uint8) if is_dependent else None
                 fixed = []
 
-                for bla in range(1):
+                for i, hi in enumerate(tree):
+                    obj_hypotheses = hypotheses[hi-1]
 
-                    for hi in tree:
-                        obj_hypotheses = hypotheses[hi-1]
+                    d = scene_depth.copy()
+                    # if hi > 0:
+                    # others = [j-1 for j in tree[:hi]]
+                    others = [j - 1 for j in tree if j != hi]
+                    mask_others = np.dstack(tuple(obj_depths))[:, :, others].sum(axis=2) > 0
+                    obj_depth = obj_depths[hi - 1].copy()
+                    unique_mask = np.logical_and(obj_depth > 0, mask_others)
+                    if (unique_mask > 0).sum() > (obj_depth > 0).sum() * 0.9:
+                        unique_mask = obj_depth == 0
+                    # d[unique_mask] = 0
+                    # plt.imshow(np.logical_and(obj_depth>0, np.logical_not(unique_mask>0)))
+                    # plt.show()
 
-                        d = scene_depth.copy()
-                        # if hi > 0:
-                        # others = [j-1 for j in tree[:hi]]
-                        others = [j - 1 for j in tree if j != hi]
-                        mask_others = np.dstack(tuple(obj_depths))[:, :, others].sum(axis=2) > 0
-                        obj_depth = obj_depths[hi - 1].copy()
-                        unique_mask = np.logical_and(obj_depth > 0, mask_others)
-                        if (unique_mask > 0).sum() > (obj_depth > 0).sum() * 0.9:
-                            unique_mask = obj_depth == 0
-                        # d[unique_mask] = 0
-                        # plt.imshow(np.logical_and(obj_depth>0, np.logical_not(unique_mask>0)))
-                        # plt.show()
+                    # others_depth = np.ones_like(obj_depth)*1000
+                    # for fixed_depth in fixed_depths:
+                    #     others_depth[np.logical_and(others_depth>fixed_depth, fixed_depth > 0)] = fixed_depth[np.logical_and(others_depth>fixed_depth, fixed_depth > 0)]
+                    # others_depth[others_depth == 1000] = 0
+                    # plt.imshow(others_depth)
+                    # plt.show()
 
-                        # others_depth = np.ones_like(obj_depth)*1000
-                        # for fixed_depth in fixed_depths:
-                        #     others_depth[np.logical_and(others_depth>fixed_depth, fixed_depth > 0)] = fixed_depth[np.logical_and(others_depth>fixed_depth, fixed_depth > 0)]
-                        # others_depth[others_depth == 1000] = 0
-                        # plt.imshow(others_depth)
-                        # plt.show()
+                    observation = {
+                        # "rgb": rgb,  # TODO debug
+                        "depth": d,
+                        "normals": scene_normals,
+                        "extrinsics": camera_extrinsics,
+                        "intrinsics": camera_intrinsics,
+                        "mask_others": unique_mask,
+                        # "depth_others": others_depth
+                    }
+                    Verefine.OBSERVATION = observation
+                    renderer.set_observation(scene_depth.reshape(480, 640, 1))
 
+                    # TODO check if len(tree) > 1 and i != len(tree)-1 -> only if dependencies are physical, not for occlusion!
+                    Verefine.fit_fn = Verefine.fit_multi if len(tree) > 1 else Verefine.fit_single  # TODO or by mask overlap? is_dependent does not work well...
+                    pir.fixed = fixed  # note: s.t. sim in initial BAB scoring is correct
+                    bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=unexplained)
+                    bab.refine_max(fixed=fixed, unexplained=unexplained)
+                    hypothesis, plays, fit = bab.get_best()
+                    assert hypothesis is not None
+                    if is_dependent:
+                        h_depth = hypothesis.render(observation, 'depth')[1]*1000
+                        # unexplained[np.logical_and(np.abs(h_depth - scene_depth) < 8, h_depth > 0)] = 0
+                        # h_depth[h_depth - scene_depth > 5] = 0
+                        h_depth[np.abs(h_depth - scene_depth) > 8] = 0
+                        unexplained[h_depth>0] = 0
+                        obj_depths[hi-1] = h_depth.copy()
+                        fixed.append([hypothesis])
+                #     # fixed_depths.append(h_depth)
+                    final_hypotheses.append(hypothesis)
+
+                    refinements += bab.max_iter - len(obj_hypotheses)  # don't count initial render
+        elif MODE == "VFtree":
+            refinements = 0
+
+            with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
+                gt_info = yaml.load(file)
+            trees = gt_info['scene']['dependency_order']
+
+            for ti, tree in enumerate(trees):
+
+                # 1) individual isolated object -> run BABn
+                if len(tree) == 1:
+                    ind_1.append(ind)
+                    ind += 1
+                    final_hypotheses.append(None)
+                    continue
+
+                    hi = tree[0]
+                    obj_hypotheses = hypotheses[hi - 1]
+
+                    # # TODO with others still masked?
+                    # others = [j - 1 for j in tree if j != hi]
+                    # mask_others = np.dstack(tuple(obj_depths))[:, :, others].sum(axis=2) > 0
+                    # obj_depth = obj_depths[hi - 1].copy()
+                    # unique_mask = np.logical_and(obj_depth > 0, mask_others)
+                    # if (unique_mask > 0).sum() > (obj_depth > 0).sum() * 0.9:
+                    #     unique_mask = obj_depth == 0
+                    #
+                    observation = {
+                        # "rgb": rgb,  # TODO debug
+                        "depth": scene_depth,
+                        "normals": scene_normals,
+                        "extrinsics": camera_extrinsics,
+                        "intrinsics": camera_intrinsics,
+                        # "mask_others": unique_mask
+                    }
+                    Verefine.OBSERVATION = observation
+                    renderer.set_observation(scene_depth.reshape(480, 640, 1))
+
+                    Verefine.fit_fn = Verefine.fit_single
+                    bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=None)
+                    bab.refine_max(fixed=[], unexplained=None)
+                    hypothesis, plays, fit = bab.get_best()
+                    assert hypothesis is not None
+                    final_hypotheses.append(hypothesis)
+
+                    refinements += bab.max_iter - len(obj_hypotheses)  # don't count initial render
+                # 2) dependency graph -> run tree of BABn with scene reward ~ monitored MCTS
+                else:
+                    if len(tree) == 2:
+                        ind_2 += [ind, ind + 1]
+                        ind += 2
+                        final_hypotheses += [None, None]
+                        continue
+                    else:
+                        ind_3 += [ind, ind + 1, ind + 2]
+                        ind += 3
+                        # final_hypotheses += [None, None, None]
+                        # continue
+
+                    # MCTS loop
+                    # obj_masks = [obj_depths[oi-1] > 0 for oi in tree]
+                    babs = [None] * len(tree)
+                    scene_level_iter = 50 if len(tree) == 3 else 25
+                    for si in range(scene_level_iter):
+                        fixed = []
+
+                        # build a full scene by running the BABs in order
+                        selected = []
+                        for i, oi in enumerate(tree):
+                            obj_hypotheses = hypotheses[oi - 1]
+
+                            # others = [j-1 for j in tree[:hi]]
+                            others = [j - 1 for j in tree if j != oi]
+                            mask_others = np.dstack(tuple(obj_depths))[:, :, others].sum(axis=2) > 0
+                            obj_depth = obj_depths[oi - 1].copy()
+                            unique_mask = np.logical_and(obj_depth > 0, mask_others)
+                            if (unique_mask > 0).sum() > (obj_depth > 0).sum() * 0.9:
+                                unique_mask = obj_depth == 0
+
+                            # plt.imshow(np.logical_and(unique_mask == 0, obj_depth > 0))  # TODO debug
+
+                            observation = {
+                                # "rgb": rgb,  # TODO debug
+                                "depth": scene_depth,
+                                "normals": scene_normals,
+                                "extrinsics": camera_extrinsics,
+                                "intrinsics": camera_intrinsics,
+                                "mask_others": unique_mask
+                            }
+                            Verefine.OBSERVATION = observation
+                            renderer.set_observation(d.reshape(480, 640, 1))
+
+                            Verefine.fit_fn = Verefine.fit_multi
+
+                            if babs[i] is None:
+                                pir.fixed = fixed  # note: s.t. sim in initial BAB scoring is correct
+                                babs[i] = SceneBAB(pir, observation, obj_hypotheses)
+
+                            hi, h_sel, fit = babs[i].refine(fixed)
+
+                            # update mask per object
+                            h_depth = h_sel.render(observation, 'depth')[1] * 1000
+                            h_depth[np.abs(h_depth - d) > 8] = 0  # TODO use per-pixel-fitness for this selection?
+                            # obj_masks[oi - 1] = h_depth > 0  # TODO only if fit/reward is best?
+                            obj_depths[oi - 1] = h_depth.copy()
+
+                            fixed.append([h_sel])
+
+                            selected.append((hi, h_sel, fit))
+
+                        # compute reward
+                        sel_ids = [renderer.dataset.objlist.index(int(h.id[:2])) for _, h, _ in
+                                   selected if h is not None]  # TODO do this conversion in renderer
+                        sel_trafos = [h.transformation for _, h, _ in selected if h is not None]
+
+                        # a) render depth, compute score on CPU
                         observation = {
                             # "rgb": rgb,  # TODO debug
-                            "depth": d,
+                            "depth": scene_depth,
                             "normals": scene_normals,
                             "extrinsics": camera_extrinsics,
-                            "intrinsics": camera_intrinsics,
-                            "mask_others": unique_mask,
-                            # "depth_others": others_depth
+                            "intrinsics": camera_intrinsics
                         }
-                        Verefine.OBSERVATION = observation
-                        renderer.set_observation(scene_depth.reshape(480, 640, 1))
+                        rendered = renderer.render(sel_ids, sel_trafos, camera_extrinsics, camera_intrinsics, mode='depth+normal')
+                        reward = Verefine.fit_single(observation, rendered, None)
+                        # reward = Verefine.fit_scene(observation, rendered)  # TODO or some global fit fn?
 
-                        Verefine.fit_fn = Verefine.fit_multi if len(tree) > 1 else Verefine.fit_single  # TODO or by mask overlap? is_dependent does not work well...
-                        pir.fixed = fixed  # note: s.t. sim in initial BAB scoring is correct
-                        bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=unexplained)
-                        bab.refine_max(fixed=fixed, unexplained=unexplained)
-                        hypothesis, plays, fit = bab.get_best()
-                        assert hypothesis is not None
-                        if is_dependent:
-                            h_depth = hypothesis.render(observation, 'depth')[1]*1000
-                            # unexplained[np.logical_and(np.abs(h_depth - scene_depth) < 8, h_depth > 0)] = 0
-                            # h_depth[h_depth - scene_depth > 5] = 0
-                            h_depth[np.abs(h_depth - scene_depth) > 8] = 0
-                            # unexplained[h_depth>0] = 0
-                            obj_depths[hi-1] = h_depth.copy()
-                            fixed.append([hypothesis])
-                    #     # fixed_depths.append(h_depth)
+                        # backprop
+                        for i, (hi, _, _) in enumerate(selected):
+                            babs[i].backpropagate(hi, reward)
+
+                    # get best for final estimate
+                    for i in range(len(tree)):
+                        # hypothesis, _, _ = babs[i].get_best()  # TODO adapt to be based on reward
+                        # hypothesis = babs[i].best
+                        hypothesis = babs[i].pool[np.argmax([babs[i].rewards])][-1]
                         final_hypotheses.append(hypothesis)
 
-                        refinements += bab.max_iter - len(obj_hypotheses)  # don't count initial render
-
-            # observation = {
-            #     # "rgb": rgb,  # TODO debug
-            #     "depth": scene_depth,
-            #     "normals": scene_normals,
-            #     "extrinsics": camera_extrinsics,
-            #     "intrinsics": camera_intrinsics,
-            #     "mask_others": scene_depth == 0
-            # }
-            # # TODO improve accuracy of this selection (other masks) + take full scene for icp
-            # fin = []
-            # # Verefine.TAU = 5
-            # for i in range(3):
-            #     if final_hypotheses[i] is None or final_hypotheses[-(i+1)] is None:
-            #         fin.append(None)
-            #     else:
-            #         # fin.append(final_hypotheses[i] if final_hypotheses[i].confidence > final_hypotheses[-(i+1)].confidence
-            #         #            else final_hypotheses[-(i+1)])
-            #         # def dbg():
-            #         #     plt.subplot(1, 2, 1)
-            #         #     plt.imshow(final_hypotheses[i].render(observation, 'color')[0]/255*0.7 + rgb/255*0.3)
-            #         #     plt.subplot(1, 2, 2)
-            #         #     plt.imshow(final_hypotheses[-(i + 1)].render(observation, 'color')[0] / 255 * 0.7 + rgb / 255 * 0.3)
-            #         #     plt.title("chose left" if final_hypotheses[i].confidence > final_hypotheses[-(i+1)].confidence
-            #         #            else "chose right")
-            #         # drawnow(dbg)
-            #         # plt.pause(3.0)
-            #         Verefine.fit_fn = Verefine.fit_single
-            #         fin.append(
-            #             final_hypotheses[i] if final_hypotheses[i].fit(observation) > final_hypotheses[-(i + 1)].fit(observation)
-            #             else final_hypotheses[-(i + 1)])
-            # # Verefine.TAU = 30
-            # final_hypotheses = fin
-            # # # # # print(refinements)
-
-        # elif MODE == "BAB":
-        #     # BAB (with PIR)
-        #     refinements = 0
+                    refinements += scene_level_iter * len(tree)
         #
-        #     with open(PATH_APC + "scene-%0.4d/gt_info.yml" % scene, 'r') as file:
-        #         gt_info = yaml.load(file)
-        #     for tree in gt_info['scene']['dependency_order']:
+        # elif MODE == "VF":
+        #     hypotheses_pool = dict()
+        #     for obj_hypotheses in hypotheses:
+        #         hypotheses_pool[obj_hypotheses[0].model] = obj_hypotheses
         #
-        #         is_dependent = len(tree) > 1
+        #     Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(
+        #         obj_hypotheses)
+        #     Verefine.OBSERVATION = observation
+        #     final_hypotheses, final_fit, convergence_hypotheses = Verefine.verefine_solution(hypotheses_pool)
         #
-        #         for bab_iter in range(5):
-        #             unexplained = np.ones((480, 640), dtype=np.uint8) if is_dependent else None
-        #             fixed = []
-        #             new_hypotheses = []
-        #             for hi in tree:
-        #                 obj_hypotheses = hypotheses[hi-1]
+        #     # if Verefine.TRACK_CONVERGENCE:
+        #         # # fill-up to 200 with final hypothesis
+        #         # convergence_hypotheses += [final_hypotheses] * (200 - len(convergence_hypotheses))
         #
-        #                 others = [j-1 for j in tree if j != hi]
-        #                 mask_others = np.dstack(tuple(obj_depths))[:, :, others].sum(axis=2) > 0
-        #                 obj_depth = obj_depths[hi - 1].copy()
-        #                 unique_mask = np.logical_and(obj_depth>0, mask_others)
-        #                 if (unique_mask > 0).sum() == 0:
-        #                     unique_mask = obj_depth > 0
-        #                 obj_depth[unique_mask] = 0
+        #         # # write results
+        #         # for convergence_iteration, iteration_hypotheses in convergence_hypotheses.items():
+        #         #     iteration_hypotheses = [hs[0] for hs in iteration_hypotheses]
+        #         #     for hypothesis in iteration_hypotheses:
+        #         #         with open("/home/dominik/projects/hsr-grasping/convergence-vf5-c1/%0.3d_ycbv-test.csv"
+        #         #                   % convergence_iteration, 'a') as file:
+        #         #             parts = ["%0.2d" % scene, "%i" % 1, "%i" % int(hypothesis.model),
+        #         #                      "%0.3f" % hypothesis.confidence,
+        #         #                      " ".join(
+        #         #                          ["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
+        #         #                      " ".join(
+        #         #                          ["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
+        #         #                      "%0.3f" % 1.0]
+        #         #             file.write(",".join(parts) + "\n")
         #
-        #                 observation = {
-        #                     # "rgb": rgb,  # TODO debug
-        #                     "depth": obj_depth,
-        #                     # "normals": estimate_normals(depth/1000),
-        #                     "extrinsics": camera_extrinsics,
-        #                     "intrinsics": camera_intrinsics
-        #                 }
-        #                 Verefine.OBSERVATION = observation
-        #                 renderer.set_observation(obj_depth.reshape(480, 640, 1))
-        #
-        #                 # set according to actual number of hypotheses (could be less for PCS if we don't find enough)
-        #                 Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(obj_hypotheses)
-        #
-        #                 bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=unexplained)
-        #                 for bab_ref in range(bab_iter**2):
-        #                     bab.refine(fixed=fixed, unexplained=unexplained)
-        #                 hypothesis, plays, fit = bab.get_best()
-        #                 if is_dependent:
-        #                     h_depth = hypothesis.render(observation, 'depth')[1]*1000
-        #                     unexplained[np.logical_and(np.abs(h_depth - scene_depth) < 8, h_depth > 0)] = 0
-        #                     fixed.append([hypothesis])
-        #
-        #                 new_candidates = bab.get_best_n(26)
-        #                 if bab_iter == 4 or len(new_candidates) == 0:
-        #                     final_hypotheses.append(hypothesis)
-        #                     new_hypotheses.append(obj_hypotheses)
-        #                 else:
-        #                     new_hypotheses.append(new_candidates)
-        #             hypotheses = new_hypotheses
-
-        elif MODE == "SV":
-            Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(
-                obj_hypotheses)
-            pass  # TODO this should be similar to mitash, just everything at scene level -> no BAB, adapt candidate generation
-
-        elif MODE == "VF":
-            hypotheses_pool = dict()
-            for obj_hypotheses in hypotheses:
-                hypotheses_pool[obj_hypotheses[0].model] = obj_hypotheses
-
-            Verefine.MAX_REFINEMENTS_PER_HYPOTHESIS = Verefine.ITERATIONS * Verefine.REFINEMENTS_PER_ITERATION * len(
-                obj_hypotheses)
-            Verefine.OBSERVATION = observation
-            final_hypotheses, final_fit, convergence_hypotheses = Verefine.verefine_solution(hypotheses_pool)
-
-            # if Verefine.TRACK_CONVERGENCE:
-                # # fill-up to 200 with final hypothesis
-                # convergence_hypotheses += [final_hypotheses] * (200 - len(convergence_hypotheses))
-
-                # # write results
-                # for convergence_iteration, iteration_hypotheses in convergence_hypotheses.items():
-                #     iteration_hypotheses = [hs[0] for hs in iteration_hypotheses]
-                #     for hypothesis in iteration_hypotheses:
-                #         with open("/home/dominik/projects/hsr-grasping/convergence-vf5-c1/%0.3d_ycbv-test.csv"
-                #                   % convergence_iteration, 'a') as file:
-                #             parts = ["%0.2d" % scene, "%i" % 1, "%i" % int(hypothesis.model),
-                #                      "%0.3f" % hypothesis.confidence,
-                #                      " ".join(
-                #                          ["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
-                #                      " ".join(
-                #                          ["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
-                #                      "%0.3f" % 1.0]
-                #             file.write(",".join(parts) + "\n")
-
-            final_hypotheses = [hs[0] for hs in final_hypotheses]
+        #     final_hypotheses = [hs[0] for hs in final_hypotheses]
 
         durations.append(time.time() - st)
 
@@ -871,6 +958,13 @@ if __name__ == "__main__":
         #
         # --- vis
         if PLOT:
+            observation = {
+                "depth": scene_depth,
+                "normals": scene_normals,
+                "extrinsics": camera_extrinsics,
+                "intrinsics": camera_intrinsics
+            }
+
             vis = np.dstack((depth, depth, depth))/1000#
             vis = rgb.copy()
             rgb_ren = []
@@ -945,17 +1039,17 @@ if __name__ == "__main__":
     print("ALL err t [cm] = %0.1f" % (np.mean(errors_translation)/10))
     print("------")
     if ALL_COSTS:
-        print("SSD <1cm = %0.1f%%" % (np.mean(np.array(errors_ssd) < 10) * 100))
-        print("SSD <2cm = %0.1f%%" % (np.mean(np.array(errors_ssd) < 20) * 100))
-        print("ADI <1cm = %0.1f%%" % (np.mean(np.array(errors_adi) < 10) * 100))
-        print("ADI <2cm = %0.1f%%" % (np.mean(np.array(errors_adi) < 20) * 100))
+        print("SSD <1cm = %0.1f%%" % (np.mean(np.array(errors_ssd)[ind_1] < 10) * 100))
+        print("SSD <2cm = %0.1f%%" % (np.mean(np.array(errors_ssd)[ind_1] < 20) * 100))
+        print("ADI <1cm = %0.1f%%" % (np.mean(np.array(errors_adi)[ind_1] < 10) * 100))
+        print("ADI <2cm = %0.1f%%" % (np.mean(np.array(errors_adi)[ind_1] < 20) * 100))
         print("------")
-        print("mAP SSD <1cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd), 10) * 100))
-        print("mAP SSD <2cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd), 20) * 100))
-        print("mAP ADI <1cm = %0.1f%%" % (compute_mAP(np.array(errors_adi), 10) * 100))
-        print("mAP ADI <2cm = %0.1f%%" % (compute_mAP(np.array(errors_adi), 20) * 100))
+        print("mAP SSD <1cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd)[ind_1], 10) * 100))
+        print("mAP SSD <2cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd)[ind_1], 20) * 100))
+        print("mAP ADI <1cm = %0.1f%%" % (compute_mAP(np.array(errors_adi)[ind_1], 10) * 100))
+        print("mAP ADI <2cm = %0.1f%%" % (compute_mAP(np.array(errors_adi)[ind_1], 20) * 100))
         print("------")
-        print("VSD <0.3 = %0.1f%%" % (np.mean(np.array(errors_vsd) < 0.3) * 100))
+        print("VSD <0.3 = %0.1f%%" % (np.mean(np.array(errors_vsd)[ind_1] < 0.3) * 100))
         print("------")
     print("total = %0.1fms" % (np.mean(durations)*1000))
     print("total (w/o first) = %0.1fms" % (np.mean(durations[1:])*1000))

@@ -44,7 +44,7 @@ if __name__ == "__main__":
     dataset = LmDataset(base_path=PATH_LM)
     SCENES = dataset.objlist[1:]
 
-    with open("/home/dominik/projects/hsr-grasping/log/BAB_top0.7/1-t05_lm-test.csv", 'r') as file:
+    with open("/home/dominik/projects/hsr-grasping/log/BAB_top0.3/1-t05_lm-test.csv", 'r') as file:
         hypotheses = file.readlines()
 
     # get all test targets
@@ -109,7 +109,8 @@ if __name__ == "__main__":
             camera_extrinsics[:3, 3] = camera_extrinsics[:3, 3] + camera_extrinsics[:3, :3]*np.matrix([0.0, 0.0, dataset.obj_bot[scene-1]]).T
 
             hypothesis = hypotheses[hi]
-            assert hypothesis.startswith("%0.2d,%i" % (scene, frame))
+            if not hypothesis.startswith("%0.2d,%i" % (scene, frame)):
+                continue
             hi += 1
 
             parts = hypothesis.split(",")

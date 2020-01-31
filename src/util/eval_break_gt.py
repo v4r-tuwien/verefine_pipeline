@@ -43,20 +43,20 @@ PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
 PATH_LM = "/mnt/Data/datasets/SIXD/LM_LM-O/"
 PATH_LM_ROOT = '/mnt/Data/datasets/Linemod_preprocessed/'
 
-MODE = "ALLON"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi
-EST_MODE = "GT"  # "GT", "DF", "PCS"
+MODE = "BAB"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi
+EST_MODE = "DF"  # "GT", "DF", "PCS"
 REF_MODE = "DF"  # "DF", "ICP"
-SEGMENTATION = "GT"  # GT, PCNN
-EXTRINSICS = "GT"  # GT, PLANE
+SEGMENTATION = "PCNN"  # GT, PCNN
+EXTRINSICS = "PLANE"  # GT, PLANE
 TAU = 20
 TAU_VIS = 10  # [mm]
 
 # BREAK IT
 # 1) initial pose
 MODE_OFF = "r"  # "t", "r"
-OFFSETS = [5]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
+OFFSETS = [50]#[0, 25, 50]#list(range(0, 51, 10))  # TODO list(range(0, 51, 5))#list(range(0, 91, 10)) if MODE_OFF == "r" else list(range(0, 51, 5))
 # 2) depth noise
-MODE_NOISE = "top"  # top, sample, patch, ""
+MODE_NOISE = ""  # top, sample, patch, ""
 NOISE_SAMPLE_P = 0.7  # percentage of samples to be removed in mode "sample"
 NOISE_PATCH_P = 0.7  # percentage of the bbox size to use for the occlusion patch in mode "patch"
 NOISE_TOP_P = 0.3  # the top x% (w.r.t. object height) are cut-off in mode "top"
@@ -174,6 +174,9 @@ if __name__ == "__main__":
             if SEGMENTATION == "GT":
                 labels = np.array(PIL.Image.open(PATH_BOP19 + "lm/test/%0.6d/mask/%0.6d_000000.png" % (scene, frame)))
             elif SEGMENTATION == "PCNN":
+                if not os.path.exists(PATH_LM_ROOT + "segnet_results/%0.2d_label/%0.4d_label.png" % (scene, frame)):
+                    print("no segmentation for %i-%i - skipping frame" % (scene, frame))
+                    continue
                 labels = np.array(PIL.Image.open(PATH_LM_ROOT + "segnet_results/%0.2d_label/%0.4d_label.png" % (scene, frame)))
             else:
                 raise ValueError("SEGMENTATION can only be GT or PCNN")
@@ -210,7 +213,7 @@ if __name__ == "__main__":
             obj_poses = [pose]
 
             if EXTRINSICS == "PLANE":
-                plane_detector = PlaneDetector(640, 480, camera_intrinsics, down_scale=8)
+                plane_detector = PlaneDetector(640, 480, camera_intrinsics, down_scale=4)
 
                 # camera_extrinsics = np.matrix(np.eye(4))
                 # camera_extrinsics[:3, :3] = np.matrix(frame_camera["cam_R_w2c"]).reshape(3, 3)
@@ -321,23 +324,40 @@ if __name__ == "__main__":
 
             def estimate_normals(D):
                 D_px = D.copy() * camera_intrinsics[0, 0]  # from meters to pixels
-                # # Sobel
+
+                import cv2 as cv
+
+                # inpaint missing depth values
+                D_px = cv.inpaint(D_px.astype(np.float32), np.uint8(D_px == 0), 3, cv.INPAINT_NS)
+                # blur
+                D_px = cv.GaussianBlur(D_px, (9, 9), sigmaX=10.0)
+
+                # get derivatives
+
+                # # 1) Sobel
                 # dzdx = cv.Sobel(depth, cv.CV_64F, dx=1, dy=0, ksize=-1)  # difference
                 # dzdy = cv.Sobel(depth, cv.CV_64F, dx=0, dy=1, ksize=-1)  # step size of 1px
-                import cv2 as cv
-                # Prewitt
+
+                # 2) Prewitt
                 kernelx = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
                 kernely = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
                 dzdx = cv.filter2D(D_px, -1, kernelx)
                 dzdy = cv.filter2D(D_px, -1, kernely)
+
+                # gradient ~ normal
                 normal = np.dstack((-dzdx, -dzdy, D_px != 0.0))  # only where we have a depth value
                 n = np.linalg.norm(normal, axis=2)
                 n = np.dstack((n, n, n))
                 normal = np.divide(normal, n, where=(n != 0))
+
+                # remove invalid values
                 normal[n == 0] = 0.0
+                normal[D == 0] = 0.0
+
                 # plt.imshow((normal + 1) / 2)
                 # plt.show()
                 return normal
+
 
             observation = {
                 "color": rgb,
@@ -414,7 +434,6 @@ if __name__ == "__main__":
                 obj_Ts = []
                 hypotheses = []
                 offsets = []
-                estimates = []
                 refiner_params = []
 
                 # TODO still a bit leaky -- check using fast.ai GPUMemTrace
@@ -436,6 +455,7 @@ if __name__ == "__main__":
                             new_hypotheses.append(Hypothesis("%0.2d" % scene, obj_T, obj_roi, obj_mask, None, None, hi,
                                                              obj_confidence, refiner_param=refiner_param))
                             # new_refiner_params.append([rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate, Verefine.ITERATIONS, emb, cloud])
+
                             if REF_MODE == "ICP":
                                 refiner_params[-1][-3:-1] = None, None
                         hypotheses += [new_hypotheses]
