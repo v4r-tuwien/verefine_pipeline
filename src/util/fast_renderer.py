@@ -66,6 +66,7 @@ _fragment_code = """
 #extension GL_EXT_gpu_shader4 : enable
 uniform sampler2D u_texture;
 uniform sampler2D u_observation;
+uniform sampler2D u_mask;
 uniform int u_use_texture;
 uniform int u_mode;
 uniform int u_obj_id;
@@ -93,41 +94,80 @@ void main() {
     }
     else if(u_mode == 3) {
         vec3 eye_normal = normalize(v_eye_normal);
-        gl_FragColor = vec4(eye_normal.y, eye_normal.z, eye_normal.x, v_eye_depth);
+        //gl_FragColor = vec4(eye_normal.y, eye_normal.z, eye_normal.x, v_eye_depth);
+        gl_FragColor = vec4(eye_normal.x, eye_normal.y, eye_normal.z, v_eye_depth);
     }
-    else {  // cost in shader       
-        /*if (u_obj_id > 0 && ((1 << int(texture2D(u_texture, v_texcoord).y) & u_obj_id) == 0)) {
-            // if u_obj_id is set, compute the cost only for the given object -- otherwise for all objects
-            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        } else {*/
-            float ren_depth = float(texture2D(u_texture, v_texcoord).x) * 1000.0;//v_eye_depth*1000.0;
-            float obs_depth = float(texture2D(u_observation, v_texcoord).x);
-            
-            float rendered = 1.0;
-            if (ren_depth < 1.0) {
-                rendered = 0.0;
-            }
-            
-            float valid = 1.0;
-            if (ren_depth < 1.0 || obs_depth < 1.0) {
-                valid = 0.0;
-            }
-            
-            float visible = 0.0;
-            float delta = 0.0;
-            if (valid == 1.0) {
-                float difference = ren_depth - obs_depth;
+    else if(u_mode == 4) {  // cost in shader              
+        vec3 ren_normal = texture2D(u_texture, v_texcoord).xyz;
+        float ren_depth = float(texture2D(u_texture, v_texcoord).w) * 1000.0; // v_eye_depth*1000.0;
+        vec3 obs_normal = texture2D(u_observation, v_texcoord).xyz;
+        float obs_depth = float(texture2D(u_observation, v_texcoord).w);
+        
+        float valid = 0.0;
+        float delta_d = 0.0;
+        float delta_n = 0.0;
+        
+        float TAU = 20.0;
+        float TAU_VIS = 10.0;
+        float ALPHA = 0.707;
+        
+        float visible = 0.0;
+        
+        if (ren_depth > 0.0 || obs_depth > 0.0) {  // TODO check obs depth here or with visibility?
+        
+            valid = 1.0;
+        
+            float difference = ren_depth - obs_depth; 
+            //if ( (difference < TAU_VIS || obs_depth == 0.0) ) 
+            {
+                visible = 1.0;
                 
-                if (difference < 10.0) {
-                    visible = 1.0;  // only visible -- ren at most [TAU_VIS] behind obs
-                    
-                    float distance = abs(difference);
-                    delta = min(distance / 20.0, 1.0); // difference is always positive
-                } 
+                float dist = abs(difference);
+                delta_d = 1.0 - min(1.0, dist/TAU);            
+                
+                float ang = clamp(dot(obs_normal, ren_normal), 0.0, 1.0);
+                delta_n = 1.0 - min(1.0, (1.0-ang)/ALPHA);
             }
-            
-            gl_FragColor = vec4(rendered, visible, delta, 1.0);
-        //}
+        }
+        
+        gl_FragColor = vec4(valid, delta_d, delta_n, visible);
+        //gl_FragColor = vec4(ren_normal, ang);
+    }
+    else {
+        vec3 ren_normal = texture2D(u_texture, v_texcoord).xyz;
+        float ren_depth = float(texture2D(u_texture, v_texcoord).w) * 1000.0;
+        vec3 obs_normal = texture2D(u_observation, v_texcoord).xyz;
+        float obs_depth = float(texture2D(u_observation, v_texcoord).w);
+        float masked = texture2D(u_mask, v_texcoord).x;
+        
+        float valid = 0.0;
+        float delta_d = 0.0;
+        float delta_n = 0.0;
+
+        float TAU = 20.0;
+        float TAU_VIS = 10.0;
+        float ALPHA = 0.707;
+        
+        float visible = 0.0;
+        
+        if (masked == 0.0) { //ren_depth > 0.0 || obs_depth > 0.0) {  // obs_depth is scene_depth with other objects masked out according to seg/est
+        
+            valid = 1.0;
+        
+            float difference = ren_depth - obs_depth; 
+            if ( difference < TAU_VIS || obs_depth == 0.0 )
+            {
+                visible = 1.0;
+
+                float dist = abs(difference);
+                delta_d = 1.0 - min(1.0, dist/TAU);            
+                
+                float ang = clamp(dot(obs_normal, ren_normal), 0.0, 1.0);
+                delta_n = 1.0 - min(1.0, (1.0-ang)/ALPHA);
+            }
+        }
+        
+        gl_FragColor = vec4(valid, delta_d, delta_n, visible);
     }
 }
 """
@@ -211,7 +251,7 @@ class Model:
             normals = []
             for face_pts in pts.reshape(int(pts.shape[0] / 3), 3, 3):
                 p0, p1, p2 = face_pts
-                n = normalize(np.cross(normalize(p2 - p0), normalize(p1 - p0)))
+                n = normalize(np.cross(normalize(p1 - p0), normalize(p2 - p0)))
                 normals += [n, n, n]
             normals = np.array(normals)
 
@@ -471,24 +511,31 @@ class Renderer:
     def _compute_model_view_proj(self, model, view, proj):
         return np.dot(np.dot(model, view), proj)
 
-    def set_observation(self, observation):
-        self.observed_depth = observation
-        self.observation = (observation.astype(np.float32)[::-1, :, :]).view(gloo.TextureFloat2D)  # TODO or do i have the UVs upside down?
+    def set_observation(self, observation_d, observation_n, observation_mask=None):
+        self.observed_full = np.dstack([observation_n, observation_d])
+        if self.observation is not None:
+            self.observation.delete()
+            self.observation = None
+        self.observation = (self.observed_full.astype(np.float32)[::-1, :, :]).view(gloo.TextureFloat2D)  # TODO or do i have the UVs upside down?
         self.program['u_observation'] = self.observation
+        if observation_mask is None:
+            observation_mask = np.zeros_like(observation_d)
+        self.mask = (observation_mask.astype(np.uint8)[::-1, :, :]).view(gloo.Texture2D)
+        self.program['u_mask'] = self.mask
 
     def _draw(self, model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id):
 
-        assert mode in ['color', 'depth', 'depth+seg', 'depth+normal', 'cost']
+        assert mode in ['color', 'depth', 'depth+seg', 'depth+normal', 'cost', 'cost_multi']
 
         self.fbo.activate()
 
         # self.activate_egl_context()
 
-        if mode == 'depth' or (mode == 'cost' and cost_id is None):
+        if mode == 'depth':
             dims = 1
             format = gl.GL_RED
             self.program['u_mode'] = 1
-        elif mode == 'depth+seg' or (mode == 'cost' and cost_id > 0):
+        elif mode == 'depth+seg':
             dims = 2
             format = gl.GL_RG
             self.program['u_mode'] = 2
@@ -496,7 +543,7 @@ class Renderer:
             dims = 3
             format = gl.GL_RGB
             self.program['u_mode'] = 0
-        elif mode == 'depth+normal':
+        elif mode in ['depth+normal', 'cost', 'cost_multi']:
             dims = 4
             format = gl.GL_RGBA
             self.program['u_mode'] = 3
@@ -533,7 +580,7 @@ class Renderer:
         buffer = np.zeros((self.height, self.width, dims), dtype=np.float32)
 
         DEBUG_COST = False  # computes using both variants
-        if mode != 'cost' or DEBUG_COST:
+        if mode not in ['cost', 'cost_multi'] or DEBUG_COST:
             gl.glReadPixels(0, 0, self.width, self.height, format, gl.GL_FLOAT, buffer)
 
             buffer.shape = self.height, self.width, dims
@@ -541,13 +588,13 @@ class Renderer:
         elapsed_read = time.time() - st
 
         st = time.time()
-        if mode == 'cost':
+        if mode in ['cost', 'cost_multi']:
             # self.fbo.deactivate()
             self.fbo2.activate()
             self.program['u_texture'] = self.color_depth_buf
             dims = 4
             format = gl.GL_BGRA
-            self.program['u_mode'] = 4
+            self.program['u_mode'] = 4 if mode == 'cost' else 5
             # self.program['u_observation'] = self.observation
 
             self.program['u_mv'] = np.eye(4)
@@ -569,14 +616,17 @@ class Renderer:
             gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
             layer_factor = (2 ** (layer * 2))  # number of pixels that was binned into a single value
-            n_visible = test[:, :, 1].sum() * layer_factor
-            n_rendered = test[:, :, 2].sum() * layer_factor
-            if n_visible == 0 or n_rendered == 0:
-                fit = 0  # visibility ratio is 0 or NaN
+            n_valid = test[:, :, 2].sum()# * layer_factor
+            if n_valid == 0:
+                fit = 0
             else:
-                visibility_ratio = n_visible / n_rendered
-                delta = (test[:, :, 0].sum() * layer_factor) / n_visible
-                fit = visibility_ratio * (1 - delta)
+                n_visible = test[:, :, 3].sum()
+                delta_d = test[:, :, 1].sum() / n_visible# * layer_factor) / n_valid
+                delta_n = test[:, :, 0].sum() / n_visible#* layer_factor) / n_valid
+                # visibility = n_visible / n_valid
+                n_factor = 0.5
+                fit = delta_d*(1-n_factor) + delta_n*n_factor
+                # fit *= visibility
 
                 if DEBUG_COST:
                     print(fit)
@@ -602,7 +652,7 @@ class Renderer:
 
                 return fit
 
-            fitness = fit(self.observed_depth, buffer)
+            fitness = fit(self.observed_full, buffer)
             if DEBUG_COST:
                 print(fitness)
         elapsed_cost = time.time() - st
@@ -611,7 +661,7 @@ class Renderer:
 
         # self.deactivate_egl_context()
 
-        if mode == "cost":
+        if mode in ["cost", 'cost_multi']:
             return buffer, fit
         else:
             return buffer
@@ -713,19 +763,17 @@ class Renderer:
             # TODO is it much faster to have a single draw and multiple read-backs for e.g. color+depth+seg?
 
         rgb, depth, seg = None, None, None
-        if mode == 'depth' or (mode == 'cost' and cost_id is None):  # depth-only
+        if mode == 'depth' or (mode in ['cost', 'cost_multi'] and cost_id is None):  # depth-only
             buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
-            if mode == 'cost':
+            if mode in ['cost', 'cost_multi']:
                 buffer, cost = buffer
             depth = buffer[:, :, 0]#.astype(np.float32)
         else:
             if 'color' in mode:
                 buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, 'color', bbox, cost_id)
                 rgb = np.round(buffer[:, :, :3] * 255).astype(np.uint8)  # Convert to [0, 255]
-            if 'depth+seg' in mode or (mode == 'cost' and cost_id > 0):
+            if 'depth+seg' in mode:
                 buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
-                if mode == 'cost':
-                    buffer, cost = buffer
                 depth = buffer[:, :, 0]#.astype(np.float32)
                 seg = buffer[:, :, 1].astype(np.uint8)
             if 'depth+normal' in mode:
@@ -744,7 +792,7 @@ class Renderer:
         #---------------------------------------------------------------------------
         if mode == 'depth':
             return None, depth, None
-        elif mode == 'cost':
+        elif mode in ['cost', 'cost_multi']:
             return [None, depth, None], cost
         elif mode == 'color':
             return rgb, None, None

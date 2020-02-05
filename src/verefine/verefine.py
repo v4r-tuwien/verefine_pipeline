@@ -33,6 +33,8 @@ ALL_OBJECTS = True
 HYPOTHESES_PER_OBJECT = 25
 ITERATIONS = 1
 REFINEMENTS_PER_ITERATION = 1
+SIM_STEPS = 60  # 60 as in Mitash, 3 as in paper (~10*5ms)
+
 BUDGET_SCALE = 1 if not ALL_OBJECTS else 3  # scales max iterations of verification (1... nobject * max iter per object -> one wrong node and we cannot refine all)
 REFINE_AT_ONCE = True  # during SV, spend budget one-by-one (False) or all at once (True)
 
@@ -162,21 +164,29 @@ def fit_single(observation, rendered, unexplained):
     st = time.time()
     depth_obs = observation['depth'].copy()
     depth_ren = rendered[1] * 1000  # in mm TODO or do this in renderer?
+    norm_obs = observation['normals']
+    norm_ren = rendered[3]
 
     mask = np.logical_or(depth_ren>0, depth_obs>0)  # TODO if depth_obs is already masked
+    # mask = np.logical_and(depth_ren>0, depth_obs>0)
     # if unexplained is not None:
     #     mask = np.logical_and(unexplained, mask)
+
+    # if "label" in observation:
+    #     mask = np.logical_and(mask, observation["label"] > 0)
+
+    # depth_vis_test = depth_obs.copy()
+    # depth_vis_test[depth_obs == 0] = 1000
+    # vis_mask = np.logical_and(mask,
+    #                           depth_ren - depth_vis_test < TAU_VIS)  # only visible -- ren at most [TAU_VIS] behind obs
+    # visibility = float((vis_mask>0).sum()) / float((depth_ren>0).sum()) if np.count_nonzero(mask) > 0 else 0
+    # mask = vis_mask
 
     if np.count_nonzero(mask) == 0 or (depth_ren > 0).sum() == 0:  # no valid depth values
         cost_durations.append(time.time() - st)
         return 0
 
-    # depth_vis_test = depth_obs.copy()
-    # depth_vis_test[depth_obs == 0] = 1000
-    # # vis_mask = np.logical_and(mask,
-    # #                           depth_ren - depth_vis_test < TAU_VIS)  # only visible -- ren at most [TAU_VIS] behind obs
     # vis_mask = depth_ren - depth_vis_test < 5#TAU_VIS
-    # visibility = float((vis_mask>0).sum()) / float((depth_ren>0).sum())
     # overlap = 1 - float(np.logical_and(depth_ren>0, observation['mask_others']).sum()) / float((depth_ren>0).sum())
     # overlap = 1 - float(np.logical_and(depth_ren>0, depth_obs>0).sum()) / float((depth_ren>0).sum())
     # overlap = 1 - float(np.logical_and(vis_mask, depth_obs > 0).sum()) / float(vis_mask.sum())
@@ -184,13 +194,16 @@ def fit_single(observation, rendered, unexplained):
     # unsupported
     unsupported = float(np.logical_and(depth_ren > 0, depth_obs == 0).sum()) / float((depth_ren>0).sum())
 
+    # TODO debug - perfect fit
+    # depth_ren[depth_ren>0] = depth_obs[depth_ren>0]
+    # norm_ren[depth_ren>0] = norm_obs[depth_ren>0]
+
     # delta fit
     dist = np.abs(depth_obs[mask] - depth_ren[mask])
     delta = np.mean(np.min(np.vstack((dist / TAU, np.ones(dist.shape[0]))), axis=0))
 
     # cos fit
-    norm_obs = observation['normals']
-    norm_ren = rendered[3]
+    # norm_ren = np.dstack([norm_ren[:,:,0], norm_ren[:,:,2], norm_ren[:,:,1]])
     # # plt.imshow((norm_ren+1)/2)
     # # plt.show()
     on = norm_obs[mask].reshape(mask.sum(), 3)
@@ -205,8 +218,15 @@ def fit_single(observation, rendered, unexplained):
     # fit = np.mean(aldoma_delta)
 
     fit = (1-delta) * 0.5 + cos_fit * 0.5
+    # print(fit)
     # fit = (1-delta)*0.4 + cos_fit*0.4 + (1-unsupported) * 0.2
     # fit = fit * (fit) + (1-unsupported)*(1-fit)
+    # fit /= ((depth_ren > 0).sum() / (mask > 0).sum())
+    # fit *= visibility
+
+    # if "label" in observation:
+    #     overlap = np.logical_and(depth_ren>0, observation["label"] > 0).sum() / (depth_ren>0).sum()
+    #     fit = fit * 0.7 + overlap * 0.3
 
     if np.isnan(fit):  # invisible object
         cost_durations.append(time.time() - st)
@@ -215,60 +235,6 @@ def fit_single(observation, rendered, unexplained):
     cost_durations.append(time.time() - st)
     return fit
 
-
-def fit_scene(observation, rendered):
-    st = time.time()
-    depth_obs = observation['depth'].copy()
-    depth_ren = rendered[1] * 1000  # in mm
-
-    mask = np.logical_or(depth_ren>0, depth_obs>0)
-    if np.count_nonzero(mask) == 0 or (depth_ren > 0).sum() == 0:  # no valid depth values
-        cost_durations.append(time.time() - st)
-        return 0
-
-    # depth_vis_test = depth_obs.copy()
-    # depth_vis_test[depth_obs == 0] = 1000
-    # # vis_mask = np.logical_and(mask,
-    # #                           depth_ren - depth_vis_test < TAU_VIS)  # only visible -- ren at most [TAU_VIS] behind obs
-    # vis_mask = depth_ren - depth_vis_test < 5#TAU_VIS
-    # visibility = float((vis_mask>0).sum()) / float((depth_ren>0).sum())
-    # overlap = 1 - float(np.logical_and(depth_ren>0, observation['mask_others']).sum()) / float((depth_ren>0).sum())
-    # overlap = 1 - float(np.logical_and(depth_ren>0, depth_obs>0).sum()) / float((depth_ren>0).sum())
-    # overlap = 1 - float(np.logical_and(vis_mask, depth_obs > 0).sum()) / float(vis_mask.sum())
-
-    # unsupported
-    unsupported = float(np.logical_and(depth_ren > 0, depth_obs == 0).sum()) / float((depth_ren>0).sum())
-
-    # delta fit
-    dist = np.abs(depth_obs[mask] - depth_ren[mask])
-    delta = np.mean(np.min(np.vstack((dist / TAU, np.ones(dist.shape[0]))), axis=0))
-
-    # cos fit
-    norm_obs = observation['normals']
-    norm_ren = rendered[3]
-    # # plt.imshow((norm_ren+1)/2)
-    # # plt.show()
-    on = norm_obs[mask].reshape(mask.sum(), 3)
-    rn = norm_ren[mask].reshape(mask.sum(), 3)
-    cos = np.einsum('ij,ij->i', on, rn)
-    cos[cos < 0] = 0  # clamp to zero
-    cos = 1 - np.min(np.vstack(((1-cos) / ALPHA, np.ones(cos.shape[0]))), axis=0)  # threshold and normalize
-    cos_fit = np.mean(cos)
-
-    # aldoma_delta = (1 - dist/TAU) * cos
-    # aldoma_delta[dist > TAU] = 0
-    # fit = np.mean(aldoma_delta)
-
-    # fit = (1-delta) * 0.5 + cos_fit * 0.5
-    fit = (1-delta)*0.45 + cos_fit*0.45 + (1-unsupported) * 0.1
-    # fit = fit * (fit) + (1-unsupported)*(1-fit)
-
-    if np.isnan(fit):  # invisible object
-        cost_durations.append(time.time() - st)
-        return 0
-
-    cost_durations.append(time.time() - st)
-    return fit
 
 def fit_multi(observation, rendered, unexplained):
     st = time.time()
@@ -320,6 +286,11 @@ def fit_multi(observation, rendered, unexplained):
 
     fit = (1-delta)*0.5 + cos_fit*0.5  # 0.9,0.1 for 3 obj
     # fit = (1-delta)*0.45 + cos_fit*0.45 + (1-double_assign) * 0.1
+    # fit /= ((depth_ren>0).sum()/(depth_obs>0).sum())
+    #
+    # if "label" in observation:
+    #     overlap = np.logical_and(depth_ren>0, observation["label"] > 0).sum() / (depth_ren>0).sum()
+    #     fit = fit * 0.9 + overlap * 0.1
 
     if np.isnan(fit):# or p_vis < 0.1:  # invisible object
         cost_durations.append(time.time() - st)
@@ -372,7 +343,7 @@ class Hypothesis:
         """
         obj_id = RENDERER.dataset.objlist.index(int(self.id[:2]))  # TODO do this conversion in renderer
 
-        assert mode in ['color', 'depth', 'depth+seg', 'depth+normal', 'color+depth+seg', 'cost']
+        assert mode in ['color', 'depth', 'depth+seg', 'depth+normal', 'color+depth+seg', 'cost', 'cost_multi']
 
         # TODO just pass a list of hypotheses alternatively
         obj_ids = [obj_id] + [RENDERER.dataset.objlist.index(int(other[0].id[:2])) for other in fixed]
@@ -390,15 +361,21 @@ class Hypothesis:
         :param rendered:
         :return:
         """
-
-        # a) render depth, compute score on CPU
-        rendered = self.render(observation, mode='depth+normal')
-        # rendered[0] = self.render(observation, mode='color')[0]
-        # unexplained = np.ones_like(self.mask)# TODO self.mask
-        # for hs in fixed:
-        #     h_mask = hs[0].render(observation, mode='depth+seg')[2]
-        #     unexplained[h_mask > 0] = 0
-        score = fit_fn(observation, rendered, unexplained)
+        # #
+        # if fit_fn == fit_multi:# or HYPOTHESES_PER_OBJECT == 25:  # TODO also transfer to GPU
+        # # # if HYPOTHESES_PER_OBJECT == 25:
+        # #     # a) render depth, compute score on CPU
+        # rendered = self.render(observation, mode='depth+normal')
+        # #     # rendered[0] = self.render(observation, mode='color')[0]
+        # #     # unexplained = np.ones_like(self.mask)# TODO self.mask
+        # #     # for hs in fixed:
+        # #     #     h_mask = hs[0].render(observation, mode='depth+seg')[2]
+        # #     #     unexplained[h_mask > 0] = 0
+        # score = fit_fn(observation, rendered, unexplained)
+        # # else:  # fit_fn == fit_single
+        # _, score = self.render(observation, mode='cost')
+        _, score = self.render(observation, mode=('cost' if fit_fn == fit_single else 'cost_multi'))
+        # print(np.abs(score-gpu_score))
 
         # b) render depth, compute score on GPU  TODO has a bug when object is too far off
         # _, score = self.render(observation, "cost")
@@ -458,7 +435,7 @@ class PhysIR:
             # st = time.time()
             step_per_iter = self.PHYSICS_STEPS  # 20 on YCB, 100 on LM -- single hyp: *(iteration+1); multi hyp: constant
             steps = step_per_iter  # TODO step_per_iter * (iteration+1)
-            T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1/60.0, steps=60)  # 3 equivalent to 10x5ms (paper for YCBV) TODO was delta=0.005, steps=steps)
+            T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1/60.0, steps=SIM_STEPS)  # 3 equivalent to 10x5ms (paper for YCBV) TODO was delta=0.005, steps=steps)
             # print("%0.1fms" % ((time.time() - st) * 1000))
             # compute displacement (0... high, 1... no displacement)
             # disp_t = 1.0 - min(np.linalg.norm(T_phys[:3, 3] - hypothesis.transformation[:3, 3]) / (TAU/1000), 1.0)
@@ -522,7 +499,7 @@ class PhysIR:
         solution = [[hypothesis]] + self.fixed
         self.simulator.initialize_solution(solution)
 
-        T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1/60.0, steps=60)
+        T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1/60.0, steps=SIM_STEPS)
         hypothesis.transformation = T_phys.copy()  # full trafo
 
         return hypothesis
@@ -541,7 +518,7 @@ class PhysIR:
         #         self.simulator.fix_hypothesis(fix[0])
 
         T_phys = self.simulator.simulate_no_render(hypothesis.id, delta=1 / 60.0,
-                                                   steps=60)  # 3 are equivalent to 10x5ms (paper)
+                                                   steps=SIM_STEPS)  # 3 are equivalent to 10x5ms (paper)
 
         # compute displacement (0... high, 1... no displacement) TODO consider all objects or just new one?
         max_displacement = 9.81 * (3/60.0)**2  # [m]
@@ -605,7 +582,7 @@ class BudgetAllocationBandit:
         # self.pir.fixed = fixed
         for hi, h in enumerate(hypotheses):
             stability = 0.0#self.pir.simulate(h) * self.factor if self.factor > 0 else 0.0
-            self.fits[hi, 0] = h.fit(observation, unexplained=unexplained) * (1.0 - self.factor) + stability
+            self.fits[hi, 0] = h.fit(observation, unexplained=unexplained)
 
             _, T_phys = self.pir.simulate(h)
             h_phys = h.duplicate()
@@ -617,19 +594,31 @@ class BudgetAllocationBandit:
             if fit > self.fits[hi, 0]:
                 self.pool[hi] = [h_phys]
                 self.fits[hi, 0] = fit
+
+            self.pool[hi][0].confidence = self.fits[hi, 0]
         # self.pir.fixed = []
+        self.fits[np.isnan(self.fits)] = 0
 
         self.plays = [1] * self.arms
         self.rewards = [fit for fit in self.fits[:, 0]]  # init reward with fit of initial hypothesis
 
         self.active = np.ones(self.arms)
 
+        # n_removed = 0
+        # for hi, fit in enumerate(self.fits[:, 0]):
+        #     if fit < 0.05:
+        #         del self.plays[hi-n_removed]
+        #         del self.rewards[hi-n_removed]
+        #         n_removed += 1
+        # if len(self.plays) == 0:
+        #     self.plays = [self.max_iter]
+
     # TODO caller has to handle the fixing of the environment
     def refine(self, fixed=[], unexplained=None):
         iteration = np.sum(self.plays)
         if iteration < self.max_iter:
             # SELECT
-            c = np.sqrt(2)  # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
+            c = C  # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
 
             # assert (self.rewards == self.fits[:,:iteration].mean(axis=1)).sum() == iteration
             ucb_scores = [r + np.sqrt(c) * np.sqrt(np.log(iteration) / n) for r, n in zip(self.rewards, self.plays)]
@@ -660,11 +649,11 @@ class BudgetAllocationBandit:
 
             # REWARD  # TODO render fixed hypotheses as well? but cost only for object -- stimulate with fixed!
             stability = 0.0 #self.pir.simulate(child) * self.factor if self.factor > 0 else 0.0
-            reward = child.fit(self.observation, unexplained=unexplained) * (1.0 - self.factor) + stability
+            reward = child.fit(self.observation, unexplained=unexplained) #* (1.0 - self.factor) + stability
             child.confidence = reward
 
             stability_phys = 0.0#self.pir.simulate(physics_child) * self.factor if self.factor > 0 else 0.0
-            reward_phys = physics_child.fit(self.observation, unexplained=unexplained) * (1.0 - self.factor) + stability_phys
+            reward_phys = physics_child.fit(self.observation, unexplained=unexplained) # (1.0 - self.factor) + stability_phys
             physics_child.confidence = reward_phys
 
             if reward_phys > reward:
@@ -715,8 +704,11 @@ class BudgetAllocationBandit:
         # select best fit and add it to final solution
         best_hi, best_ri = np.unravel_index(self.fits.argmax(), self.fits.shape)
 
-        return self.pool[best_hi][best_ri], self.plays[
-            best_hi % len(self.plays)] - 1, self.fits.max()  # do not count initial render
+        # print(self.fits)
+        # print(self.pool[best_hi][best_ri].confidence)
+
+        return self.pool[best_hi][best_ri], -1, -1#, self.plays[
+            #best_hi % len(self.plays)] - 1, self.fits.max()  # do not count initial render
 
     def get_best_n(self, n):
         best_n = []
@@ -785,7 +777,7 @@ class SceneBAB:
         # iteration = np.sum(self.plays)
         # if iteration < self.max_iter:
         # SELECT
-        c = np.sqrt(2)  # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
+        c = C  # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
 
         # assert (self.rewards == self.fits[:,:iteration].mean(axis=1)).sum() == iteration
         ucb_scores = [r + np.sqrt(c) * np.sqrt(np.log(np.sum(self.plays)) / n) for r, n in zip(self.rewards, self.plays)]

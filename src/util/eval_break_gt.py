@@ -43,7 +43,9 @@ PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
 PATH_LM = "/mnt/Data/datasets/SIXD/LM_LM-O/"
 PATH_LM_ROOT = '/mnt/Data/datasets/Linemod_preprocessed/'
 
-MODE = "BAB"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi
+TEST_TARGETS = "test_targets_ral"  #"test_targets_bop19"
+
+MODE = "BASE"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi
 EST_MODE = "DF"  # "GT", "DF", "PCS"
 REF_MODE = "DF"  # "DF", "ICP"
 SEGMENTATION = "PCNN"  # GT, PCNN
@@ -65,7 +67,6 @@ NOISE_TOP_P = 0.3  # the top x% (w.r.t. object height) are cut-off in mode "top"
 SCENES = []
 
 PLOT = False
-USE_NORMALS = False
 
 obj_names = {
     1: "ape",
@@ -89,6 +90,9 @@ obj_names = {
 
 if __name__ == "__main__":
 
+    Verefine.HYPOTHESES_PER_OBJECT = 1
+    Verefine.ITERATIONS = 2
+
     dataset = LmDataset(base_path=PATH_LM)
     SCENES = dataset.objlist[1:]
 
@@ -105,7 +109,7 @@ if __name__ == "__main__":
     durations = []
 
     # if MODE != "BASE" or REF_MODE == "ICP":
-    renderer = Renderer(dataset, recompute_normals=USE_NORMALS)
+    renderer = Renderer(dataset, recompute_normals=True)
     Verefine.RENDERER = renderer
         # renderer.create_egl_context()
 
@@ -121,7 +125,7 @@ if __name__ == "__main__":
     # keyframes = [keyframe.replace("\n", "") for keyframe in keyframes]
 
     # get all test targets
-    with open(PATH_BOP19 + "lm/test_targets_bop19.json", 'r') as file:
+    with open(PATH_BOP19 + "lm/%s.json" % TEST_TARGETS, 'r') as file:
         targets = json.load(file)
 
     im_ids, scene_ids, inst_counts, obj_ids = [], [], [], []
@@ -168,8 +172,8 @@ if __name__ == "__main__":
             # meta = scio.loadmat(PATH_LM + "../YCB_Video_toolbox/results_PoseCNN_RSS2018/%0.6d.mat" % keyframe)
 
             # load observation
-            rgb = np.array(PIL.Image.open(PATH_BOP19 + "lm/test/%0.6d/rgb/%0.6d.png" % (scene, frame)))
-            depth = np.array(PIL.Image.open(PATH_BOP19 + "lm/test/%0.6d/depth/%0.6d.png" % (scene, frame)))
+            rgb = np.array(PIL.Image.open(PATH_LM_ROOT + "data/%0.2d/rgb/%0.4d.png" % (scene, frame)))  #PATH_BOP19 + "lm/test/%0.6d/rgb/%0.6d.png" % (scene, frame)))
+            depth = np.array(PIL.Image.open(PATH_LM_ROOT + "data/%0.2d/depth/%0.4d.png" % (scene, frame)))  #PATH_BOP19 + "lm/test/%0.6d/depth/%0.6d.png" % (scene, frame)))
 
             if SEGMENTATION == "GT":
                 labels = np.array(PIL.Image.open(PATH_BOP19 + "lm/test/%0.6d/mask/%0.6d_000000.png" % (scene, frame)))
@@ -178,6 +182,9 @@ if __name__ == "__main__":
                     print("no segmentation for %i-%i - skipping frame" % (scene, frame))
                     continue
                 labels = np.array(PIL.Image.open(PATH_LM_ROOT + "segnet_results/%0.2d_label/%0.4d_label.png" % (scene, frame)))
+                if (labels > 0).sum() == 0:
+                    print("no segmentation for %i-%i - skipping frame" % (scene, frame))
+                    continue
             else:
                 raise ValueError("SEGMENTATION can only be GT or PCNN")
 
@@ -187,7 +194,7 @@ if __name__ == "__main__":
             frame_obj_names = [obj_names[int(idx)] for idx in frame_obj_ids]
 
             # get extrinsics and intrinsics
-            frame_camera = scene_camera[str(frame)]
+            frame_camera = scene_camera[str(frame)] if "ral" not in TEST_TARGETS else scene_camera[list(scene_camera.keys())[0]]
 
             camera_intrinsics = np.array(frame_camera["cam_K"]).reshape(3, 3)
 
@@ -206,10 +213,10 @@ if __name__ == "__main__":
 
             # get pose estimates
             obj_ids_ = [scene]  #[int(v) for v in meta['rois'][:, 1]]
-            pose_info = scene_gt['%i' % frame][0]
+            # pose_info = scene_gt['%i' % frame][0]  # TODO load GT separately when not using BOP19
             pose = np.matrix(np.eye(4))
-            pose[:3, :3] = np.array(pose_info['cam_R_m2c']).reshape(3, 3)
-            pose[:3, 3] = np.array(pose_info['cam_t_m2c']).reshape(3, 1)/1000
+            # pose[:3, :3] = np.array(pose_info['cam_R_m2c']).reshape(3, 3)
+            # pose[:3, 3] = np.array(pose_info['cam_t_m2c']).reshape(3, 1)/1000
             obj_poses = [pose]
 
             if EXTRINSICS == "PLANE":
@@ -236,7 +243,8 @@ if __name__ == "__main__":
 
             obj_mask = labels == 255
             mask_ids = np.argwhere(labels == 255)
-            obj_roi = scene_gt_info['%i' % frame][0]['bbox_obj']
+            obj_roi = scene_gt_info['%i' % frame][0]['bbox_obj'] if "ral" not in TEST_TARGETS \
+                else [np.min(mask_ids[:, 0]), np.min(mask_ids[:, 1]), np.max(mask_ids[:, 0]), np.max(mask_ids[:, 1])]
 
             scene_depth = depth.copy()
             scene_depth[obj_mask == 0] = 0
@@ -408,7 +416,10 @@ if __name__ == "__main__":
                 return rmin, rmax, cmin, cmax
 
 
-            obj_roi = [0, 0, obj_roi[0], obj_roi[1], obj_roi[0] + obj_roi[2], obj_roi[1] + obj_roi[3]]
+            if "ral" not in TEST_TARGETS:
+                obj_roi = [0, 0, obj_roi[0], obj_roi[1], obj_roi[0] + obj_roi[2], obj_roi[1] + obj_roi[3]]
+            else:
+                obj_roi = [0, 0, obj_roi[1], obj_roi[0], obj_roi[3], obj_roi[2]]
             vmin, vmax, umin, umax = get_bbox(obj_roi)
             obj_roi = [vmin, umin, vmax, umax]
 

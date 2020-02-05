@@ -50,7 +50,7 @@ ALL_COSTS = True
 num_scenes = 42
 PLOT = False
 
-MODE = "BASE" if POOL in ["super4pcs", "search"] else "BAB"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
+MODE = "BASE" if POOL in ["super4pcs", "search"] else "VFtree"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
 EST_MODE = "PCS"
 REF_MODE = "" if POOL in ["super4pcs", "search"] else "ICP"
 
@@ -194,6 +194,11 @@ def compute_mAP(errors, max_value, linestyle=None):
 
 if __name__ == "__main__":
 
+    Verefine.HYPOTHESES_PER_OBJECT = 25
+    Verefine.ITERATIONS = 1
+    Verefine.SIM_STEPS = 60
+    Verefine.C = np.sqrt(2)
+
     dataset = ExApcDataset(base_path=PATH_APC)
     ref = None
     durations = []
@@ -286,7 +291,7 @@ if __name__ == "__main__":
             dzdy = cv.filter2D(D_px, -1, kernely)
 
             # gradient ~ normal
-            normal = np.dstack((-dzdx, -dzdy, D_px != 0.0))  # only where we have a depth value
+            normal = np.dstack((dzdy, dzdx, D_px != 0.0))  # only where we have a depth value
             n = np.linalg.norm(normal, axis=2)
             n = np.dstack((n, n, n))
             normal = np.divide(normal, n, where=(n != 0))
@@ -517,9 +522,7 @@ if __name__ == "__main__":
             # init frame
             simulator.initialize_frame(camera_extrinsics.I)
         # if MODE != "BASE" or REF_MODE == "ICP":
-        obs = depth.reshape(480, 640, 1)
-    #     obs[labels == 0] = 0  # makes results worse (with PCNN seg)
-        renderer.set_observation(obs)
+        renderer.set_observation(scene_depth.reshape(480, 640, 1), scene_normals.reshape(480, 640, 3))
 
         if MODE == "BASE":
             # DF (base)
@@ -558,8 +561,8 @@ if __name__ == "__main__":
                 if len(tree) == 1:
                     ind_1.append(ind)
                     ind += 1
-                    # final_hypotheses.append(None)
-                    # continue
+                    final_hypotheses.append(None)
+                    continue
                 elif len(tree) == 2:
                     ind_2 += [ind, ind + 1]
                     ind += 2
@@ -568,11 +571,21 @@ if __name__ == "__main__":
                 else:
                     ind_3 += [ind, ind + 1, ind + 2]
                     ind += 3
-                    final_hypotheses += [None, None, None]
-                    continue
+                    # final_hypotheses += [None, None, None]
+                    # continue
 
                 for i, oi in enumerate(tree):
                     obj_hypotheses = hypotheses[oi - 1]
+
+                    # others = [j - 1 for j in tree if j != oi]
+                    # mask_others = np.dstack(tuple(obj_depths))[:, :, others].sum(axis=2) > 0
+                    # obj_depth = obj_depths[oi - 1].copy()
+                    # unique_mask = np.logical_and(obj_depth > 0, mask_others)
+                    # if (unique_mask > 0).sum() > (obj_depth > 0).sum() * 0.9:
+                    #     unique_mask = obj_depth == 0
+                    #
+                    # d = scene_depth.copy()
+                    # d[unique_mask>0] = 0
 
                     observation = {
                         "depth": scene_depth,
@@ -581,7 +594,7 @@ if __name__ == "__main__":
                         "intrinsics": camera_intrinsics
                     }
                     Verefine.OBSERVATION = observation
-                    renderer.set_observation(scene_depth.reshape(480, 640, 1))
+                    renderer.set_observation(scene_depth.reshape(480, 640, 1), scene_normals.reshape(480, 640, 3))
 
                     Verefine.fit_fn = Verefine.fit_single
                     bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=None)
@@ -656,7 +669,7 @@ if __name__ == "__main__":
                         # "depth_others": others_depth
                     }
                     Verefine.OBSERVATION = observation
-                    renderer.set_observation(scene_depth.reshape(480, 640, 1))
+                    renderer.set_observation(scene_depth.reshape(480, 640, 1), scene_normals.reshape(480, 640, 3))
 
                     # TODO check if len(tree) > 1 and i != len(tree)-1 -> only if dependencies are physical, not for occlusion!
                     Verefine.fit_fn = Verefine.fit_multi if len(tree) > 1 else Verefine.fit_single  # TODO or by mask overlap? is_dependent does not work well...
@@ -690,8 +703,8 @@ if __name__ == "__main__":
                 if len(tree) == 1:
                     ind_1.append(ind)
                     ind += 1
-                    final_hypotheses.append(None)
-                    continue
+                    # final_hypotheses.append(None)
+                    # continue
 
                     hi = tree[0]
                     obj_hypotheses = hypotheses[hi - 1]
@@ -713,7 +726,7 @@ if __name__ == "__main__":
                         # "mask_others": unique_mask
                     }
                     Verefine.OBSERVATION = observation
-                    renderer.set_observation(scene_depth.reshape(480, 640, 1))
+                    renderer.set_observation(scene_depth.reshape(480, 640, 1), scene_normals.reshape(480, 640, 3))
 
                     Verefine.fit_fn = Verefine.fit_single
                     bab = BudgetAllocationBandit(pir, observation, obj_hypotheses, unexplained=None)
@@ -733,8 +746,8 @@ if __name__ == "__main__":
                     else:
                         ind_3 += [ind, ind + 1, ind + 2]
                         ind += 3
-                        # final_hypotheses += [None, None, None]
-                        # continue
+                        final_hypotheses += [None, None, None]
+                        continue
 
                     # MCTS loop
                     # obj_masks = [obj_depths[oi-1] > 0 for oi in tree]
@@ -755,8 +768,9 @@ if __name__ == "__main__":
                             unique_mask = np.logical_and(obj_depth > 0, mask_others)
                             if (unique_mask > 0).sum() > (obj_depth > 0).sum() * 0.9:
                                 unique_mask = obj_depth == 0
+                            #
+                            # # plt.imshow(np.logical_and(unique_mask == 0, obj_depth > 0))  # TODO debug
 
-                            # plt.imshow(np.logical_and(unique_mask == 0, obj_depth > 0))  # TODO debug
 
                             observation = {
                                 # "rgb": rgb,  # TODO debug
@@ -767,7 +781,9 @@ if __name__ == "__main__":
                                 "mask_others": unique_mask
                             }
                             Verefine.OBSERVATION = observation
-                            renderer.set_observation(d.reshape(480, 640, 1))
+                            renderer.set_observation(scene_depth.reshape(480, 640, 1),
+                                                     scene_normals.reshape(480, 640, 3),
+                                                     unique_mask.reshape(480, 640, 1))
 
                             Verefine.fit_fn = Verefine.fit_multi
 
@@ -779,7 +795,7 @@ if __name__ == "__main__":
 
                             # update mask per object
                             h_depth = h_sel.render(observation, 'depth')[1] * 1000
-                            h_depth[np.abs(h_depth - d) > 8] = 0  # TODO use per-pixel-fitness for this selection?
+                            h_depth[np.abs(h_depth - scene_depth) > 8] = 0  # TODO use per-pixel-fitness for this selection?
                             # obj_masks[oi - 1] = h_depth > 0  # TODO only if fit/reward is best?
                             obj_depths[oi - 1] = h_depth.copy()
 
@@ -800,9 +816,16 @@ if __name__ == "__main__":
                             "extrinsics": camera_extrinsics,
                             "intrinsics": camera_intrinsics
                         }
-                        rendered = renderer.render(sel_ids, sel_trafos, camera_extrinsics, camera_intrinsics, mode='depth+normal')
-                        reward = Verefine.fit_single(observation, rendered, None)
+                        renderer.set_observation(scene_depth.reshape(480, 640, 1),
+                                                 scene_normals.reshape(480, 640, 3))
+                        # rendered = renderer.render(sel_ids, sel_trafos, camera_extrinsics, camera_intrinsics, mode='depth+normal')
+                        # reward = Verefine.fit_single(observation, rendered, None)
                         # reward = Verefine.fit_scene(observation, rendered)  # TODO or some global fit fn?
+
+                        Verefine.fit_fn = Verefine.fit_single
+                        _, reward = renderer.render(sel_ids, sel_trafos, camera_extrinsics, camera_intrinsics,
+                                                    mode='cost')
+                        # print(np.abs(reward-gpu_reward))
 
                         # backprop
                         for i, (hi, _, _) in enumerate(selected):
@@ -1039,18 +1062,19 @@ if __name__ == "__main__":
     print("ALL err t [cm] = %0.1f" % (np.mean(errors_translation)/10))
     print("------")
     if ALL_COSTS:
-        print("SSD <1cm = %0.1f%%" % (np.mean(np.array(errors_ssd)[ind_1] < 10) * 100))
-        print("SSD <2cm = %0.1f%%" % (np.mean(np.array(errors_ssd)[ind_1] < 20) * 100))
-        print("ADI <1cm = %0.1f%%" % (np.mean(np.array(errors_adi)[ind_1] < 10) * 100))
-        print("ADI <2cm = %0.1f%%" % (np.mean(np.array(errors_adi)[ind_1] < 20) * 100))
-        print("------")
-        print("mAP SSD <1cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd)[ind_1], 10) * 100))
-        print("mAP SSD <2cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd)[ind_1], 20) * 100))
-        print("mAP ADI <1cm = %0.1f%%" % (compute_mAP(np.array(errors_adi)[ind_1], 10) * 100))
-        print("mAP ADI <2cm = %0.1f%%" % (compute_mAP(np.array(errors_adi)[ind_1], 20) * 100))
-        print("------")
-        print("VSD <0.3 = %0.1f%%" % (np.mean(np.array(errors_vsd)[ind_1] < 0.3) * 100))
-        print("------")
+        for sub_indices in [ind_1]:
+            print("SSD <1cm = %0.1f%%" % (np.mean(np.array(errors_ssd)[sub_indices] < 10) * 100))
+            print("SSD <2cm = %0.1f%%" % (np.mean(np.array(errors_ssd)[sub_indices] < 20) * 100))
+            print("ADI <1cm = %0.1f%%" % (np.mean(np.array(errors_adi)[sub_indices] < 10) * 100))
+            print("ADI <2cm = %0.1f%%" % (np.mean(np.array(errors_adi)[sub_indices] < 20) * 100))
+            print("------")
+            print("mAP SSD <1cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd)[sub_indices], 10) * 100))
+            print("mAP SSD <2cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd)[sub_indices], 20) * 100))
+            print("mAP ADI <1cm = %0.1f%%" % (compute_mAP(np.array(errors_adi)[sub_indices], 10) * 100))
+            print("mAP ADI <2cm = %0.1f%%" % (compute_mAP(np.array(errors_adi)[sub_indices], 20) * 100))
+            print("------")
+            print("VSD <0.3 = %0.1f%%" % (np.mean(np.array(errors_vsd)[sub_indices] < 0.3) * 100))
+            print("------")
     print("total = %0.1fms" % (np.mean(durations)*1000))
     print("total (w/o first) = %0.1fms" % (np.mean(durations[1:])*1000))
     print("------")

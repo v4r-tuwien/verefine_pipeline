@@ -253,7 +253,7 @@ class Simulator:
                     # pybullet.setCollisionFilterGroupMask(self.models[other_str], -1, 0, 0)  # TODO why is this needed all of a sudden?
                     continue
                 if other_str != obj_str:
-                    pybullet.changeDynamics(self.models[other_str], -1, mass=0.0)  # TODO should be 0 -- change "fix others" to get same result
+                    pybullet.changeDynamics(self.models[other_str], -1, mass=1.0)  # TODO should be 0 -- change "fix others" to get same result
                     pybullet.setCollisionFilterGroupMask(self.models[other_str], -1, 1, 1)  # TODO why is this needed all of a sudden?
                 else:
                     pybullet.changeDynamics(self.models[other_str], -1, mass=1.0)#self.dataset.obj_masses[int(obj_str[:2])-1])

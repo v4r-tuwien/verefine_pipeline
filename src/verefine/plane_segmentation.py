@@ -49,13 +49,13 @@ class PlaneDetector:
 
         # === use PCL for plane segmentation
         self.cloud.from_array(points)
-        seg = self.cloud.make_segmenter_normals(ksearch=100)
+        seg = self.cloud.make_segmenter()#_normals(ksearch=100)
         seg.set_optimize_coefficients(True)
-        seg.set_model_type(pcl.SACMODEL_NORMAL_PLANE)
-        seg.set_method_type(pcl.SAC_RANSAC)
-        seg.set_distance_threshold(0.02)
-        seg.set_normal_distance_weight(0.5)
-        seg.set_max_iterations(100)
+        seg.set_model_type(pcl.SACMODEL_PLANE)#_NORMAL_PLANE)
+        seg.set_method_type(pcl.SAC_MSAC)#RANSAC)
+        seg.set_distance_threshold(0.005)#0.02)
+        # seg.set_normal_distance_weight(0.5)
+        # seg.set_max_iterations(1000)
         if initial_z_axis is not None:
             seg.set_axis(*initial_z_axis)
             seg.set_eps_angle(np.deg2rad(angle_eps))

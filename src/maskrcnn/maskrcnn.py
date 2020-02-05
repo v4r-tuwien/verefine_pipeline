@@ -5,7 +5,7 @@ from mrcnn.config import Config
 from mrcnn import utils
 import mrcnn.model as modellib
 
-from maskrcnn_util import BopInferenceConfig
+from src.maskrcnn.maskrcnn_util import BopInferenceConfig
 
 
 class MaskRcnnDetector:
@@ -35,7 +35,7 @@ class MaskRcnnDetector:
             self.config.DETECTION_NMS_THRESHOLD = 0.5
 
             self.detection_model = modellib.MaskRCNN(mode="inference", config=self.config, model_dir="/")
-            self.detection_model.load_weights("/maskrcnn/data/mask_rcnn_ycbv_0005.h5", by_name=True)  # TODO load
+            self.detection_model.load_weights("../../data/mask_rcnn_ycbv_0005.h5", by_name=True)  # TODO load
 
             self.detection_labels = list(range(1, 22))  # TODO load
 
@@ -74,7 +74,7 @@ class MaskRcnnDetector:
             scores = np.array(r['scores'])
             masks = r['masks'][window[0]:window[2], window[1]:window[3], :]
 
-            print(masks.shape)
+            # print(masks.shape)
             # return rois, obj_orders, obj_ids, scores, masks
 
             return obj_ids, rois, masks, scores

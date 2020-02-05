@@ -137,6 +137,8 @@ class DenseFusion(Refiner):
         # --- object pose estimation
         hypotheses = []
         try:
+
+            # a) one forward pass, sample from estimates
             pred_r, pred_t, pred_c, emb, cloud = self.forward(rgb, depth, intrinsics, roi, mask, class_id)
 
             pred_c = pred_c.view(self.bs, self.num_points)
@@ -157,6 +159,28 @@ class DenseFusion(Refiner):
 
                 # add to hypotheses
                 hypotheses.append([instance_r.copy(), instance_t.copy(), how_max])
+
+            # b) n forward passes (re-samples depth) and take best estimate each
+            # for hypothesis_id in range(hypotheses_per_instance):
+            #     pred_r, pred_t, pred_c, emb, cloud = self.forward(rgb, depth, intrinsics, roi, mask, class_id)
+            #
+            #     pred_c = pred_c.view(self.bs, self.num_points)
+            #     pred_t = pred_t.view(self.bs * self.num_points, 1, 3)
+            #     points = cloud.view(self.bs * self.num_points, 1, 3)
+            #
+            #     # select max conf hypothesis and [hypotheses_per_object-1] uniformly sampled additional hypotheses
+            #     how_max, which_max = pred_c.max(1)
+            #     candidates = list(range(self.num_points))
+            #     candidates.remove(which_max)  # so this is not selected twice
+            #     selected = np.random.choice(candidates, hypotheses_per_instance - 1, replace=False)  # uniform w/o replace
+            #     which_max = torch.cat((which_max, torch.LongTensor(selected.astype(np.int64)).cuda()))
+            #
+            #     instance_r = pred_r[0][which_max[0]].view(-1).cpu().data.numpy()  # w, x, y, z
+            #     instance_r = np.concatenate((instance_r[1:], [instance_r[0]]))  # to x, y, z, w
+            #     instance_t = (points + pred_t)[which_max[0]].view(-1).cpu().data.numpy()
+            #
+            #     # add to hypotheses
+            #     hypotheses.append([instance_r.copy(), instance_t.copy(), how_max])
         except ZeroDivisionError:
             print("Detector lost object with id %i." % (class_id))
             emb, cloud = None, None
