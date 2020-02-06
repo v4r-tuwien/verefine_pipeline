@@ -50,7 +50,7 @@ ALL_COSTS = True
 num_scenes = 42
 PLOT = False
 
-MODE = "BASE" if POOL in ["super4pcs", "search"] else "VFtree"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
+MODE = "BASE" if POOL in ["super4pcs", "search"] else "VFlist"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
 EST_MODE = "PCS"
 REF_MODE = "" if POOL in ["super4pcs", "search"] else "ICP"
 
@@ -233,14 +233,14 @@ if __name__ == "__main__":
     # scenes = list(range(1, 36))  # all with annotated dependencies
     # scenes = list(range(1, 43))  # all scenes in dataset
     for scene in scenes:
-        if scene > 30:#< 31:  #
-            errors_translation += [0, 0, 0]
-            errors_rotation += [0, 0, 0]
-            errors_ssd += [0, 0, 0]
-            errors_adi += [0, 0, 0]
-            errors_vsd += [0, 0, 0]
-            ind += 3
-            continue
+        # if scene < 31:  #> 30:#
+        #     errors_translation += [0, 0, 0]
+        #     errors_rotation += [0, 0, 0]
+        #     errors_ssd += [0, 0, 0]
+        #     errors_adi += [0, 0, 0]
+        #     errors_vsd += [0, 0, 0]
+        #     ind += 3
+        #     continue
         print("scene %i..." % scene)
 
         # gt info
@@ -528,7 +528,7 @@ if __name__ == "__main__":
             # DF (base)
             refinements = 0
             # refine only max conf
-            for obj_hypotheses in hypotheses:
+            for oi, obj_hypotheses in enumerate(hypotheses):
                 hypothesis = obj_hypotheses[0]  # only take best
 
                 # refinements += refiner_param[-3]
@@ -539,6 +539,20 @@ if __name__ == "__main__":
                     hypothesis.transformation[:3, 3] = t.reshape(3, 1)
                     hypothesis.confidence = c
                 final_hypotheses.append(hypothesis)
+
+
+            #     # TODO dbg -- fix GT
+            #     obj_fixed_T = hypothesis.transformation
+            #     obj_fixed_T = world_to_cam.I * obj_fixed_T
+            #     obj_fixed_q = Rotation.from_dcm(obj_fixed_T[:3, :3]).as_quat()  # xyzw
+            #     obj_fixed_q = [obj_fixed_q[3]] + list(obj_fixed_q[:-1].flat)  # wxyz
+            #     obj_fixed_t = list(obj_fixed_T[:3, 3].T.flat)
+            #
+            #     gt_info['scene']['object_%i' % (oi + 1)]['pose_fixed'] = [float(v) for v in obj_fixed_t + obj_fixed_q]
+            #     print(obj_fixed_t + obj_fixed_q)
+            # with open(PATH_APC + "scene-%0.4d/gt_info_fixed.yml" % scene, 'w') as file:
+            #     yaml.dump(gt_info, file)
+
             # print(refinements)
 
         elif MODE == "PIR":
@@ -561,13 +575,13 @@ if __name__ == "__main__":
                 if len(tree) == 1:
                     ind_1.append(ind)
                     ind += 1
-                    final_hypotheses.append(None)
-                    continue
+                    # final_hypotheses.append(None)
+                    # continue
                 elif len(tree) == 2:
                     ind_2 += [ind, ind + 1]
                     ind += 2
-                    final_hypotheses += [None, None]
-                    continue
+                    # final_hypotheses += [None, None]
+                    # continue
                 else:
                     ind_3 += [ind, ind + 1, ind + 2]
                     ind += 3
@@ -625,13 +639,13 @@ if __name__ == "__main__":
                     else:
                         ind_3 += [ind, ind + 1, ind + 2]
                         ind += 3
-                        final_hypotheses += [None, None, None]
-                        continue
+                        # final_hypotheses += [None, None, None]
+                        # continue
                 else:
                     ind_1.append(ind)
                     ind += 1
-                    final_hypotheses.append(None)
-                    continue
+                    # final_hypotheses.append(None)
+                    # continue
 
                 unexplained = np.ones((480, 640), dtype=np.uint8) if is_dependent else None
                 fixed = []
@@ -669,7 +683,9 @@ if __name__ == "__main__":
                         # "depth_others": others_depth
                     }
                     Verefine.OBSERVATION = observation
-                    renderer.set_observation(scene_depth.reshape(480, 640, 1), scene_normals.reshape(480, 640, 3))
+                    renderer.set_observation(scene_depth.reshape(480, 640, 1),
+                                             scene_normals.reshape(480, 640, 3),
+                                             unique_mask.reshape(480, 640, 1))
 
                     # TODO check if len(tree) > 1 and i != len(tree)-1 -> only if dependencies are physical, not for occlusion!
                     Verefine.fit_fn = Verefine.fit_multi if len(tree) > 1 else Verefine.fit_single  # TODO or by mask overlap? is_dependent does not work well...
@@ -741,13 +757,13 @@ if __name__ == "__main__":
                     if len(tree) == 2:
                         ind_2 += [ind, ind + 1]
                         ind += 2
-                        final_hypotheses += [None, None]
-                        continue
+                        # final_hypotheses += [None, None]
+                        # continue
                     else:
                         ind_3 += [ind, ind + 1, ind + 2]
                         ind += 3
-                        final_hypotheses += [None, None, None]
-                        continue
+                        # final_hypotheses += [None, None, None]
+                        # continue
 
                     # MCTS loop
                     # obj_masks = [obj_depths[oi-1] > 0 for oi in tree]
@@ -872,6 +888,16 @@ if __name__ == "__main__":
         #     final_hypotheses = [hs[0] for hs in final_hypotheses]
 
         durations.append(time.time() - st)
+
+        if not PLOT:
+            for hypothesis in final_hypotheses:
+                with open("/home/dominik/projects/hsr-grasping/log/%s/%s/super4pcs_exapc-test.csv"
+                          % (EST_MODE, MODE if POOL == "clusterPose" else POOL), 'a') as file:
+                    parts = ["%0.2d" % scene, "0", "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
+                             " ".join(["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
+                             " ".join(["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
+                             "%0.3f" % durations[-1]]
+                    file.write(",".join(parts) + "\n")
 
         # --- errors
         errs_t, errs_r = [], []
@@ -1028,11 +1054,11 @@ if __name__ == "__main__":
                 plt.subplot(2, 2, 4)
                 plt.imshow(np.abs(vis3), vmin=0, vmax=20)
                 plt.title("mean abs depth error\n = %0.3f" % np.mean(np.abs(vis3[scene_depth>0])))
-            # debug_draw()
-            # plt.show()
-            drawnow(debug_draw)
+            debug_draw()
+            plt.show()
+            # drawnow(debug_draw)
             # plt.pause(0.05)
-            plt.pause(1.0)
+            # plt.pause(1.0)
 
         print("   ---")
         print("   ~ icp/call=%0.1fms" % (np.mean(TrimmedIcp.icp_durations) * 1000))
@@ -1050,7 +1076,9 @@ if __name__ == "__main__":
         Verefine.cost_durations.clear()
 
     print("\n\n")
-
+    print("total = %0.1fms" % (np.mean(durations)*1000))
+    print("total (w/o first) = %0.1fms" % (np.mean(durations[1:])*1000))
+    print("------")
     print("1-obj err r [deg] = %0.1f" % np.mean(np.array(errors_rotation)[ind_1]))
     print("1-obj err t [cm] = %0.1f" % (np.mean(np.array(errors_translation)[ind_1]) / 10))
     print("2-obj err r [deg] = %0.1f" % np.mean(np.array(errors_rotation)[ind_2]))
@@ -1062,7 +1090,8 @@ if __name__ == "__main__":
     print("ALL err t [cm] = %0.1f" % (np.mean(errors_translation)/10))
     print("------")
     if ALL_COSTS:
-        for sub_indices in [ind_1]:
+        for ii, sub_indices in enumerate([ind_1, ind_2, ind_3]):
+            print("-- %i:" % (ii+1))
             print("SSD <1cm = %0.1f%%" % (np.mean(np.array(errors_ssd)[sub_indices] < 10) * 100))
             print("SSD <2cm = %0.1f%%" % (np.mean(np.array(errors_ssd)[sub_indices] < 20) * 100))
             print("ADI <1cm = %0.1f%%" % (np.mean(np.array(errors_adi)[sub_indices] < 10) * 100))
@@ -1075,9 +1104,20 @@ if __name__ == "__main__":
             print("------")
             print("VSD <0.3 = %0.1f%%" % (np.mean(np.array(errors_vsd)[sub_indices] < 0.3) * 100))
             print("------")
-    print("total = %0.1fms" % (np.mean(durations)*1000))
-    print("total (w/o first) = %0.1fms" % (np.mean(durations[1:])*1000))
-    print("------")
+        print("-- all:")
+        print("SSD <1cm = %0.1f%%" % (np.mean(np.array(errors_ssd) < 10) * 100))
+        print("SSD <2cm = %0.1f%%" % (np.mean(np.array(errors_ssd) < 20) * 100))
+        print("ADI <1cm = %0.1f%%" % (np.mean(np.array(errors_adi) < 10) * 100))
+        print("ADI <2cm = %0.1f%%" % (np.mean(np.array(errors_adi) < 20) * 100))
+        print("------")
+        print("mAP SSD <1cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd), 10) * 100))
+        print("mAP SSD <2cm = %0.1f%%" % (compute_mAP(np.array(errors_ssd), 20) * 100))
+        print("mAP ADI <1cm = %0.1f%%" % (compute_mAP(np.array(errors_adi), 10) * 100))
+        print("mAP ADI <2cm = %0.1f%%" % (compute_mAP(np.array(errors_adi), 20) * 100))
+        print("------")
+        print("VSD <0.3 = %0.1f%%" % (np.mean(np.array(errors_vsd) < 0.3) * 100))
+        print("------")
+
     # print("setup = %0.1fms" % (np.mean(simulator.runtimes, axis=0)[0]*1000))
     # print("sim   = %0.1fms" % (np.mean(simulator.runtimes, axis=0)[1]*1000))
     # print("read  = %0.1fms" % (np.mean(simulator.runtimes, axis=0)[2]*1000))

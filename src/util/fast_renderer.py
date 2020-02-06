@@ -109,7 +109,7 @@ void main() {
         
         float TAU = 20.0;
         float TAU_VIS = 10.0;
-        float ALPHA = 0.707;
+        float ALPHA = 0.707; //15deg = 0.966, 45deg = 0.707, 60deg = 0.5
         
         float visible = 0.0;
         

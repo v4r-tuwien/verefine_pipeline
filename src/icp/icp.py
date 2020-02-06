@@ -16,9 +16,17 @@ np.random.seed(seed)
 
 class Icp(Refiner):
 
-    def __init__(self, dataset):
-        Refiner.__init__(self)
-        self.renderer = Renderer(dataset)
+    """
+    As in P2P.
+    """
+
+    ref_count = 0
+    icp_durations = []
+
+    def __init__(self, renderer, intrinsics, dataset, mode="bab"):
+        Refiner.__init__(self, intrinsics, dataset, mode=mode)
+        self.renderer = renderer
+        self.num_samples = 1e4
 
     def getXYZ(self, depth, fx, fy, cx, cy, bbox=np.array([0])):
         # get x,y,z coordinate in mm dimension
@@ -34,8 +42,10 @@ class Icp(Refiner):
             xyz[:, :, 2] = depth
         else:  # when boundry region is given
             xyz = np.zeros((bbox[2] - bbox[0], bbox[3] - bbox[1], 3))  # x,y,z
-            xyz[:, :, 0] = uv_table[bbox[0]:bbox[2], bbox[1]:bbox[3], 1] * depth[bbox[0]:bbox[2], bbox[1]:bbox[3]] * 1 / fx
-            xyz[:, :, 1] = uv_table[bbox[0]:bbox[2], bbox[1]:bbox[3], 0] * depth[bbox[0]:bbox[2], bbox[1]:bbox[3]] * 1 / fy
+            xyz[:, :, 0] = uv_table[bbox[0]:bbox[2], bbox[1]:bbox[3], 1] * depth[bbox[0]:bbox[2],
+                                                                           bbox[1]:bbox[3]] * 1 / fx
+            xyz[:, :, 1] = uv_table[bbox[0]:bbox[2], bbox[1]:bbox[3], 0] * depth[bbox[0]:bbox[2],
+                                                                           bbox[1]:bbox[3]] * 1 / fy
             xyz[:, :, 2] = depth[bbox[0]:bbox[2], bbox[1]:bbox[3]]
         return xyz
 
@@ -46,98 +56,153 @@ class Icp(Refiner):
         '''
         res_y = depth_refine.shape[0]
         res_x = depth_refine.shape[1]
-        centerX = cx
-        centerY = cy
-        constant_x = 1 / fx
-        constant_y = 1 / fy
+        centerX=cx
+        centerY=cy
+        constant_x = 1/fx
+        constant_y = 1/fy
 
-        if (refine):
+        if(refine):
             depth_refine = np.nan_to_num(depth_refine)
             mask = np.zeros_like(depth_refine).astype(np.uint8)
-            mask[depth_refine == 0] = 1
+            mask[depth_refine==0]=1
             depth_refine = depth_refine.astype(np.float32)
-            depth_refine = cv2.inpaint(depth_refine, mask, 2, cv2.INPAINT_NS)
+            depth_refine = cv2.inpaint(depth_refine,mask,2,cv2.INPAINT_NS)
             depth_refine = depth_refine.astype(np.float)
-            depth_refine = ndimage.gaussian_filter(depth_refine, 2)
+            depth_refine = ndimage.gaussian_filter(depth_refine,2)
 
-        uv_table = np.zeros((res_y, res_x, 2), dtype=np.int16)
-        column = np.arange(0, res_y)
-        uv_table[:, :, 1] = np.arange(0, res_x) - centerX  # x-c_x (u)
-        uv_table[:, :, 0] = column[:, np.newaxis] - centerY  # y-c_y (v)
+        uv_table = np.zeros((res_y,res_x,2),dtype=np.int16)
+        column = np.arange(0,res_y)
+        uv_table[:,:,1] = np.arange(0,res_x) - centerX #x-c_x (u)
+        uv_table[:,:,0] = column[:,np.newaxis] - centerY #y-c_y (v)
 
-        if (bbox.shape[0] == 4):
-            uv_table = uv_table[bbox[0]:bbox[2], bbox[1]:bbox[3]]
-            v_x = np.zeros((bbox[2] - bbox[0], bbox[3] - bbox[1], 3))
-            v_y = np.zeros((bbox[2] - bbox[0], bbox[3] - bbox[1], 3))
-            normals = np.zeros((bbox[2] - bbox[0], bbox[3] - bbox[1], 3))
-            depth_refine = depth_refine[bbox[0]:bbox[2], bbox[1]:bbox[3]]
+        if(bbox.shape[0]==4):
+            uv_table = uv_table[bbox[0]:bbox[2],bbox[1]:bbox[3]]
+            v_x = np.zeros((bbox[2]-bbox[0],bbox[3]-bbox[1],3))
+            v_y = np.zeros((bbox[2]-bbox[0],bbox[3]-bbox[1],3))
+            normals = np.zeros((bbox[2]-bbox[0],bbox[3]-bbox[1],3))
+            depth_refine=depth_refine[bbox[0]:bbox[2],bbox[1]:bbox[3]]
         else:
-            v_x = np.zeros((res_y, res_x, 3))
-            v_y = np.zeros((res_y, res_x, 3))
-            normals = np.zeros((res_y, res_x, 3))
+            v_x = np.zeros((res_y,res_x,3))
+            v_y = np.zeros((res_y,res_x,3))
+            normals = np.zeros((res_y,res_x,3))
 
-        uv_table_sign = np.copy(uv_table)
-        uv_table = np.abs(np.copy(uv_table))
+        uv_table_sign= np.copy(uv_table)
+        uv_table=np.abs(np.copy(uv_table))
 
-        dig = np.gradient(depth_refine, 2, edge_order=2)
-        v_y[:, :, 0] = uv_table_sign[:, :, 1] * constant_x * dig[0]
-        v_y[:, :, 1] = depth_refine * constant_y + (uv_table_sign[:, :, 0] * constant_y) * dig[0]
-        v_y[:, :, 2] = dig[0]
 
-        v_x[:, :, 0] = depth_refine * constant_x + uv_table_sign[:, :, 1] * constant_x * dig[1]
-        v_x[:, :, 1] = uv_table_sign[:, :, 0] * constant_y * dig[1]
-        v_x[:, :, 2] = dig[1]
+        dig=np.gradient(depth_refine,2,edge_order=2)
+        v_y[:,:,0]=uv_table_sign[:,:,1]*constant_x*dig[0]
+        v_y[:,:,1]=depth_refine*constant_y+(uv_table_sign[:,:,0]*constant_y)*dig[0]
+        v_y[:,:,2]=dig[0]
 
-        cross = np.cross(v_x.reshape(-1, 3), v_y.reshape(-1, 3))
-        norm = np.expand_dims(np.linalg.norm(cross, axis=1), axis=1)
-        norm[norm == 0] = 1
-        cross = cross / norm
-        if (bbox.shape[0] == 4):
-            cross = cross.reshape((bbox[2] - bbox[0], bbox[3] - bbox[1], 3))
+        v_x[:,:,0]=depth_refine*constant_x+uv_table_sign[:,:,1]*constant_x*dig[1]
+        v_x[:,:,1]=uv_table_sign[:,:,0]*constant_y*dig[1]
+        v_x[:,:,2]=dig[1]
+
+        cross = np.cross(v_x.reshape(-1,3),v_y.reshape(-1,3))
+        norm = np.expand_dims(np.linalg.norm(cross,axis=1),axis=1)
+        norm[norm==0]=1
+        cross = cross/norm
+        if(bbox.shape[0]==4):
+            cross =cross.reshape((bbox[2]-bbox[0],bbox[3]-bbox[1],3))
         else:
-            cross = cross.reshape(res_y, res_x, 3)
-        cross = np.nan_to_num(cross)
+            cross =cross.reshape(res_y,res_x,3)
+        cross= np.nan_to_num(cross)
         return cross
 
     def get_bbox_from_mask(self, mask):
         vu = np.where(mask)
-        if(len(vu[0])>0):
-            return np.array([np.min(vu[0]),np.min(vu[1]),np.max(vu[0]),np.max(vu[1])],np.int)
+        if (len(vu[0]) > 0):
+            return np.array([np.min(vu[0]), np.min(vu[1]), np.max(vu[0]), np.max(vu[1])], np.int)
         else:
-            return np.zeros((4),np.int)
+            return np.zeros((4), np.int)
 
-    def icp_refinement(self, pts_tgt, obj_model, rot_pred, tra_pred, cam_K, ren):
+    def refine(self, rgb, depth, intrinsics, roi, mask, obj_id,
+               estimate, iterations, cloud_obs=None, cloud_ren=None,
+               explained=None):
+        Icp.ref_count += 1
+        st = time.time()
+
+        q, t, c = estimate
+        obj_T = np.matrix(np.eye(4))
+        obj_T[:3, :3] = Rotation.from_quat(q).as_dcm()
+        obj_T[:3, 3] = t.reshape(3, 1)
+        # pts_tgt = np.dot(self.dataset.pcd[obj_id - 1], obj_T[:3, :3].T) + obj_T[:3, 3].T
+
+        obj_id = self.renderer.dataset.objlist.index(obj_id)
+        depth_init = self.renderer.render([obj_id], [obj_T],
+                                   np.matrix(np.eye(4)), intrinsics,
+                                   mode='depth')[1]
+        depth = depth.copy() / 1000
+        camK = intrinsics
+        rot_pred = obj_T[:3, :3]
+        tra_pred = obj_T[:3, 3]*1000
+
+
+
+        depth_t = np.nan_to_num(depth)
+        depth_valid = np.logical_and(depth_t > 0.2, depth_t < 3)
+
+        st_conversion = time.time()
+        points_tgt = np.zeros((depth_t.shape[0], depth_t.shape[1], 6), np.float32)
+        points_tgt[:, :, :3] = self.getXYZ(depth_t, fx=camK[0, 0], fy=camK[1, 1], cx=camK[0, 2],
+                                      cy=camK[1, 2])
+        points_tgt[:, :, 3:] = self.get_normal(depth_t, fx=camK[0, 0], fy=camK[1, 1], cx=camK[0, 2],
+                                          cy=camK[1, 2], refine=True)
+        print("conv obs %0.3f" % (time.time() - st_conversion))
+
+        mask_pred = depth_init>0  # TODO output of P2P
+        union_mask = np.logical_or(mask, mask_pred)
+        union_mask = np.logical_and(union_mask, depth_valid)
+        pts_tgt = points_tgt[union_mask]
+
         centroid_tgt = np.array([np.mean(pts_tgt[:, 0]), np.mean(pts_tgt[:, 1]), np.mean(pts_tgt[:, 2])])
         if (tra_pred[2] < 300 or tra_pred[2] > 5000):
+            # when estimated translation is weired, set centroid of tgt points as translation
             tra_pred = centroid_tgt * 1000
 
-        img_init, depth_init = self.renderer.render(obj_model, rot_pred, tra_pred / 1000, cam_K, ren)
         init_mask = depth_init > 0
         bbox_init = self.get_bbox_from_mask(init_mask > 0)
         tf = np.eye(4)
         if (bbox_init[2] - bbox_init[0] < 10 or bbox_init[3] - bbox_init[1] < 10):
-            return tf, -1
+            return estimate
         if (np.sum(init_mask) < 10):
-            return tf, -1
-        points_src = np.zeros((bbox_init[2] - bbox_init[0], bbox_init[3] - bbox_init[1], 6), np.float32)
-        points_src[:, :, :3] = self.getXYZ(depth_init, cam_K[0, 0], cam_K[1, 1], cam_K[0, 2], cam_K[1, 2], bbox_init)
-        points_src[:, :, 3:] = self.get_normal(depth_init, fx=cam_K[0, 0], fy=cam_K[1, 1], cx=cam_K[0, 2], cy=cam_K[1, 2],
-                                          refine=True, bbox=bbox_init)
-        points_src = points_src[init_mask[bbox_init[0]:bbox_init[2], bbox_init[1]:bbox_init[3]] > 0]
+            return estimate
 
-        # adjust the initial translation using centroids of visible points
+        st_conversion = time.time()
+        points_src = np.zeros((bbox_init[2] - bbox_init[0], bbox_init[3] - bbox_init[1], 6), np.float32)
+        points_src[:, :, :3] = self.getXYZ(depth_init, camK[0, 0], camK[1, 1], camK[0, 2], camK[1, 2],
+                                      bbox_init)
+        points_src[:, :, 3:] = self.get_normal(depth_init, fx=camK[0, 0], fy=camK[1, 1], cx=camK[0, 2],
+                                          cy=camK[1, 2], refine=True, bbox=bbox_init)
+        print("conv est %0.3f" % (time.time() - st_conversion))
+        points_src = points_src[init_mask[bbox_init[0]:bbox_init[2], bbox_init[1]:bbox_init[3]] > 0]
         centroid_src = np.array([np.mean(points_src[:, 0]), np.mean(points_src[:, 1]), np.mean(points_src[:, 2])])
+
         trans_adjust = centroid_tgt - centroid_src
-        tra_pred = tra_pred + trans_adjust * 1000
+        tra_pred = tra_pred.T + trans_adjust * 1000
         points_src[:, :3] += trans_adjust
 
-        icp_fnc = cv2.ppf_match_3d_ICP(100, tolerence=0.05, numLevels=4)  # 1cm
+        st_icp = time.time()
+        icp_fnc = cv2.ppf_match_3d_ICP(10*iterations, tolerence=0.05, numLevels=5)  # 1cm
+        # print(points_src.shape)
+        # print(pts_tgt.shape)
+        points_src = points_src[np.random.choice(list(range(points_src.shape[0])),
+                                                 int(min(points_src.shape[0], self.num_samples))), :]
+        pts_tgt = pts_tgt[np.random.choice(list(range(pts_tgt.shape[0])),
+                                           int(min(points_src.shape[0], self.num_samples))), :]
         retval, residual, pose = icp_fnc.registerModelToScene(points_src.reshape(-1, 6), pts_tgt.reshape(-1, 6))
+        print("icp %0.3f" % (time.time() - st_icp))
 
+        tf = np.eye(4)
         tf[:3, :3] = rot_pred
         tf[:3, 3] = tra_pred / 1000  # in m
         tf = np.matmul(pose, tf)
-        return tf, residual
+
+        Icp.icp_durations.append(time.time()-st)
+
+        # c = residual  # TODO update c?
+        return Rotation.from_dcm(tf[:3, :3]).as_quat(), tf[:3, 3], c
 
 
 import pcl
@@ -151,6 +216,9 @@ import time
 
 
 class TrimmedIcp(Refiner):
+    """
+    As in Mitash.
+    """
 
     ref_count = 0
     icp_durations = []

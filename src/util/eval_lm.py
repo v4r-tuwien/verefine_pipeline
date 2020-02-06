@@ -29,27 +29,27 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(seed)  # gpu
     torch.cuda.manual_seed_all(seed)
 
-from src.maskrcnn.maskrcnn import MaskRcnnDetector
+# from src.maskrcnn.maskrcnn import MaskRcnnDetector
 from src.util.fast_renderer import Renderer
-from src.util.dataset import YcbvDataset
+from src.util.dataset import LmDataset
 from src.densefusion.densefusion import DenseFusion
 from src.verefine.simulator import Simulator
 from src.verefine.verefine import Hypothesis, PhysIR, BudgetAllocationBandit, SceneBAB
 import src.verefine.verefine as Verefine
-from src.icp.icp import Icp
+from src.icp.icp import TrimmedIcp
 from src.verefine.plane_segmentation import PlaneDetector
 
 
 # settings
 PATH_BOP19 = "/mnt/Data/datasets/BOP19/"
-# PATH_LM = "/mnt/Data/datasets/SIXD/LM_LM-O/"
-PATH_YCBV_ROOT = '/mnt/Data/datasets/YCB Video/YCB_Video_Dataset'
+PATH_LM = "/mnt/Data/datasets/SIXD/LM_LM-O/"
+PATH_LM_ROOT = '/mnt/Data/datasets/Linemod_preprocessed/'
 
-TEST_TARGETS = "test_targets_bop19"
+TEST_TARGETS = "test_targets_bop19"  #"test_targets_ral"
 
-MODE = "BASE"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi, {VFlist, VFtree} -> verefine
-EST_MODE = "P2P"  # "GT", "DF", "P2P"
-REF_MODE = "ICP"  # "DF", "ICP"
+MODE = "BAB"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi, {VFlist, VFtree} -> verefine
+EST_MODE = "DF"  # "GT", "DF", "PCS"
+REF_MODE = "DF"  # "DF", "ICP"
 SEGMENTATION = "PCNN"  # GT, PCNN, MRCNN
 EXTRINSICS = "PLANE"  # GT, PLANE
 TAU = 20
@@ -58,30 +58,23 @@ TAU_VIS = 10  # [mm]
 SCENES = []
 
 PLOT = False
-PLOT_DEP = False
 
 obj_names = {
-    1: "002_master_chef_can",
-    2: "003_cracker_box",
-    3: "004_sugar_box",
-    4: "005_tomato_soup_can",
-    5: "006_mustard_bottle",
-    6: "007_tuna_fish_can",
-    7: "008_pudding_box",
-    8: "009_gelatin_box",
-    9: "010_potted_meat_can",
-    10: "011_banana",
-    11: "019_pitcher_base",
-    12: "021_bleach_cleanser",
-    13: "024_bowl",
-    14: "025_mug",
-    15: "035_power_drill",
-    16: "036_wood_block",
-    17: "037_scissors",
-    18: "040_large_marker",
-    19: "051_large_clamp",
-    20: "052_extra_large_clamp",
-    21: "061_foam_brick"
+    1: "ape",
+    2: "benchvise",
+    3: "bowl",
+    4: "camera",
+    5: "can",
+    6: "cat",
+    7: "cup",
+    8: "driller",
+    9: "duck",
+    10: "eggbox",
+    11: "glue",
+    12: "holepuncher",
+    13: "iron",
+    14: "lamp",
+    15: "phone"
 }
 
 # -----------------
@@ -94,10 +87,8 @@ if __name__ == "__main__":
     Verefine.C = np.sqrt(2)
     Verefine.fit_fn = Verefine.fit_single
 
-    dataset = YcbvDataset(base_path=PATH_YCBV_ROOT)
-    if SEGMENTATION == "MRCNN":
-        maskrcnn = MaskRcnnDetector()
-    # SCENES = dataset.objlist[1:]
+    dataset = LmDataset(base_path=PATH_LM)
+    SCENES = dataset.objlist[1:]
     #
     # if len(sys.argv) > 1 and len(sys.argv) >= 3:
     #     # refine mode, offset mode and offset size (0 is script path)
@@ -121,18 +112,13 @@ if __name__ == "__main__":
         Verefine.SIMULATOR = simulator
         pir = None
 
-    if EST_MODE == "P2P":
-        with open("/home/dominik/experiments/Pix2Pose/bop_result/pix2pose-iccv19_ycbv-test.csv", "r") as file:
-            p2p_results = file.readlines()
-
-
-    # get all keyframes
-    with open(PATH_YCBV_ROOT + "/image_sets/keyframe.txt", 'r') as file:
-        keyframes = file.readlines()
-    keyframes = [keyframe.replace("\n", "") for keyframe in keyframes]
+    # # get all keyframes
+    # with open(PATH_LM + "image_sets/keyframe.txt", 'r') as file:
+    #     keyframes = file.readlines()
+    # keyframes = [keyframe.replace("\n", "") for keyframe in keyframes]
 
     # get all test targets
-    with open(PATH_BOP19 + "ycbv/%s.json" % TEST_TARGETS, 'r') as file:
+    with open(PATH_BOP19 + "lm/%s.json" % TEST_TARGETS, 'r') as file:
         targets = json.load(file)
 
     im_ids, scene_ids, inst_counts, obj_ids = [], [], [], []
@@ -145,26 +131,23 @@ if __name__ == "__main__":
 
     # loop over scenes...
     objects = []
-    scenes = sorted(np.unique(scene_ids))
-    for scene in scenes:
+    for scene in SCENES:
         print("scene %i..." % scene)
 
         scene_target_indices = np.argwhere(scene_ids == scene)
-        if PLOT:
-            scene_target_indices = [scene_target_indices[0]]
 
         # frames and objects in scene
         scene_im_ids = im_ids[scene_target_indices]
         scene_obj_ids = obj_ids[scene_target_indices]
 
         # camera infos
-        with open(PATH_BOP19 + "ycbv/test/%0.6d/scene_camera.json" % scene, 'r') as file:
+        with open(PATH_BOP19 + "lm/test/%0.6d/scene_camera.json" % scene, 'r') as file:
             scene_camera = json.load(file)
 
         # scene gt
-        with open(PATH_BOP19 + "ycbv/test/%0.6d/scene_gt.json" % scene, 'r') as file:
+        with open(PATH_BOP19 + "lm/test/%0.6d/scene_gt.json" % scene, 'r') as file:
             scene_gt = json.load(file)
-        with open(PATH_BOP19 + "ycbv/test/%0.6d/scene_gt_info.json" % scene, 'r') as file:
+        with open(PATH_BOP19 + "lm/test/%0.6d/scene_gt_info.json" % scene, 'r') as file:
             scene_gt_info = json.load(file)
 
         # loop over frames in scene...
@@ -184,25 +167,21 @@ if __name__ == "__main__":
             # meta = scio.loadmat(PATH_LM + "../YCB_Video_toolbox/results_PoseCNN_RSS2018/%0.6d.mat" % keyframe)
 
             # load observation
-            rgb = np.array(PIL.Image.open(PATH_BOP19 + "ycbv/test/%0.6d/rgb/%0.6d.png" % (scene, frame)))
-            depth = np.float32(np.array(PIL.Image.open(PATH_BOP19 + "ycbv/test/%0.6d/depth/%0.6d.png" % (scene, frame)))) / 10
+            rgb = np.array(PIL.Image.open(PATH_BOP19 + "lm/test/%0.6d/rgb/%0.6d.png" % (scene, frame)))
+            depth = np.float32(np.array(PIL.Image.open(PATH_BOP19 + "lm/test/%0.6d/depth/%0.6d.png" % (scene, frame))))
 
             if SEGMENTATION == "GT":
                 raise ValueError("GT not ready -- need to merge all labels from all files")
-                labels = np.array(PIL.Image.open(PATH_BOP19 + "ycbv/test/%0.6d/mask/%0.6d_000000.png" % (scene, frame)))
+                labels = np.array(PIL.Image.open(PATH_BOP19 + "lm/test/%0.6d/mask/%0.6d_000000.png" % (scene, frame)))
                 rois = []  # TODO
             elif SEGMENTATION == "PCNN":
-                # if not os.path.exists(PATH_YCBV_ROOT + "data/%0.2d_label/%0.4d_label.png" % (scene, frame)):
-                #     print("no segmentation for %i-%i - skipping frame" % (scene, frame))
-                #     continue
-                # labels = np.array(PIL.Image.open(PATH_LM_ROOT + "segnet_results/%0.2d_label/%0.4d_label.png" % (scene, frame)))
-                # if (labels > 0).sum() == 0:
-                #     print("no segmentation for %i-%i - skipping frame" % (scene, frame))
-                #     continue
-                toolbox_idx = keyframes.index("%0.4d/%0.6d" % (scene, frame))
-                meta = scio.loadmat(PATH_YCBV_ROOT + "/../YCB_Video_toolbox/results_PoseCNN_RSS2018/%0.6d.mat" % toolbox_idx)
-                labels = meta['labels']
-                rois = meta['rois']
+                if not os.path.exists(PATH_LM_ROOT + "segnet_results/%0.2d_label/%0.4d_label.png" % (scene, frame)):
+                    print("no segmentation for %i-%i - skipping frame" % (scene, frame))
+                    continue
+                labels = np.array(PIL.Image.open(PATH_LM_ROOT + "segnet_results/%0.2d_label/%0.4d_label.png" % (scene, frame)))
+                if (labels > 0).sum() == 0:
+                    print("no segmentation for %i-%i - skipping frame" % (scene, frame))
+                    continue
             elif SEGMENTATION == "MRCNN":
                 obj_ids_, rois, masks, scores = maskrcnn.detect(rgb)
 
@@ -225,12 +204,14 @@ if __name__ == "__main__":
                 raise ValueError("SEGMENTATION can only be GT or PCNN")
 
             # get obj ids, num objs, obj names
-            frame_obj_ids = scene_obj_ids[frame_target_indices] if SEGMENTATION == "GT" else [roi[1] for roi in rois]
+            frame_obj_ids = [
+                scene]  # scene_obj_ids[frame_target_indices] if SEGMENTATION == "GT" else np.unique(labels)[1:]
             frame_num_objs = 1  # len(frame_obj_ids)
             frame_obj_names = [obj_names[int(idx)] for idx in frame_obj_ids]
 
             # get extrinsics and intrinsics
-            frame_camera = scene_camera[str(frame)] if "ral" not in TEST_TARGETS else scene_camera[list(scene_camera.keys())[0]]
+            frame_camera = scene_camera[str(frame)] if "ral" not in TEST_TARGETS else scene_camera[
+                list(scene_camera.keys())[0]]
 
             camera_intrinsics = np.array(frame_camera["cam_K"]).reshape(3, 3)
 
@@ -239,7 +220,7 @@ if __name__ == "__main__":
                     df = DenseFusion(640, 480, camera_intrinsics, dataset, mode="bab")  # TODO set this correctly or doesn't matter non-ros refine?
 
                 if REF_MODE == "ICP":
-                    ref = Icp(renderer, camera_intrinsics, dataset, mode="bab")
+                    ref = TrimmedIcp(renderer, camera_intrinsics, dataset, mode="bab")
                 else:
                     ref = df
 
@@ -248,7 +229,7 @@ if __name__ == "__main__":
                     Verefine.REFINER = pir
 
             # get pose estimates
-            # obj_ids_ = [scene]  #[int(v) for v in meta['rois'][:, 1]]
+            obj_ids_ = [scene]  # [int(v) for v in meta['rois'][:, 1]]
             # pose_info = scene_gt['%i' % frame][0]  # TODO load GT separately when not using BOP19
             pose = np.matrix(np.eye(4))
             # pose[:3, :3] = np.array(pose_info['cam_R_m2c']).reshape(3, 3)
@@ -268,12 +249,9 @@ if __name__ == "__main__":
                     print("skipping frame...")
                     continue
             elif EXTRINSICS == "GT":
-                meta = scio.loadmat(
-                    PATH_YCBV_ROOT + "/data/%0.4d/%0.6d-meta.mat" % (scene, frame))
-                camera_extrinsics = np.matrix(np.eye(4))
-                camera_extrinsics[:3, :] = meta['rotation_translation_matrix']
-                # camera_extrinsics = pose.copy()
-                # camera_extrinsics[:3, 3] = camera_extrinsics[:3, 3] + camera_extrinsics[:3, :3]*np.matrix([0.0, 0.0, dataset.obj_bot[scene-1]]).T
+                camera_extrinsics = pose.copy()
+                camera_extrinsics[:3, 3] = camera_extrinsics[:3, 3] + camera_extrinsics[:3, :3] * np.matrix(
+                    [0.0, 0.0, dataset.obj_bot[scene - 1]]).T
             else:
                 raise ValueError("EXTRINSICS needs to be GT (from model) or PLANE (segmentation).")
 
@@ -292,9 +270,14 @@ if __name__ == "__main__":
             gc.collect()
             torch.cuda.empty_cache()
 
+            obj_mask = labels == 255
+            mask_ids = np.argwhere(labels == 255)
+            obj_roi = scene_gt_info['%i' % frame][0]['bbox_obj'] if SEGMENTATION == "GT" \
+                else [np.min(mask_ids[:, 0]), np.min(mask_ids[:, 1]), np.max(mask_ids[:, 0]), np.max(mask_ids[:, 1])]
+
             scene_depth = depth.copy()
-            scene_depth[labels == 0] = 0
-            ref_depth = scene_depth.copy()  # TODO always? or only for experiments?
+            scene_depth[obj_mask == 0] = 0
+            ref_depth = scene_depth.copy()
 
 
             def estimate_normals(D):
@@ -385,76 +368,53 @@ if __name__ == "__main__":
             gc.collect()
             torch.cuda.empty_cache()
 
-            for oi, obj_roi in enumerate(rois):
-                obj_id = int(obj_roi[1])
-                class_id = obj_id
+            # assume single roi
+            class_id = dataset.objlist.index(scene)
+            #
+            # if SEGMENTATION == "MRCNN":
+            #     obj_mask = masks[:, :, oi]
+            # else:
+            #     obj_mask = labels == obj_id
 
-                if SEGMENTATION == "MRCNN":
-                    obj_mask = masks[:, :, oi]
-                else:
-                    obj_mask = labels == obj_id
+            if SEGMENTATION == "GT":
+                obj_roi = [0, 0, obj_roi[0], obj_roi[1], obj_roi[0] + obj_roi[2], obj_roi[1] + obj_roi[3]]
+            else:
+                obj_roi = [0, 0, obj_roi[1], obj_roi[0], obj_roi[3], obj_roi[2]]
+            vmin, vmax, umin, umax = get_bbox(obj_roi)
+            obj_roi = [vmin, umin, vmax, umax]
 
-                vmin, vmax, umin, umax = get_bbox(obj_roi)
-                obj_roi = [vmin, umin, vmax, umax]
+            if EST_MODE == "DF":
+                estimates, emb, cloud = df.estimate(rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id,
+                                                    Verefine.HYPOTHESES_PER_OBJECT)
+            elif REF_MODE == "DF":
+                try:
+                    _, _, _, emb, cloud = df.forward(rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id)
+                except ZeroDivisionError:
+                    print("empty depth")
+                    continue
+            else:
+                emb, cloud = None, None
 
+            if emb is not None or REF_MODE != "DF":
                 if EST_MODE == "DF":
-                    estimates, emb, cloud = df.estimate(rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id,
-                                                        Verefine.HYPOTHESES_PER_OBJECT)
-                elif REF_MODE == "DF":
-                    try:
-                        _, _, _, emb, cloud = df.forward(rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id)
-                    except ZeroDivisionError:
-                        print("empty depth")
-                        continue
-                else:
-                    emb, cloud = None, None
-
-                if emb is not None and EST_MODE == "DF":
-                        # a) take n estimates
-                        new_hypotheses = []
-                        new_refiner_params = []
-                        for hi, estimate in enumerate(estimates):
-                            obj_T = np.matrix(np.eye(4))
-                            obj_T[:3, :3] = Rotation.from_quat(estimate[0]).as_dcm()
-                            obj_T[:3, 3] = estimate[1].reshape(3, 1)
-                            obj_confidence = estimate[2]
-                            refiner_param = [rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate,
-                                             Verefine.ITERATIONS, emb, cloud, None]
-                            new_hypotheses.append(Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, obj_mask, None, None, hi,
-                                                             obj_confidence, refiner_param=refiner_param))
-                            # new_refiner_params.append([rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate, Verefine.ITERATIONS, emb, cloud])
-
-                            if REF_MODE == "ICP":
-                                refiner_params[-1][-3:-1] = None, None
-                        hypotheses += [new_hypotheses]
-                        refiner_params += [new_refiner_params]
-                elif EST_MODE == "P2P":
-
-                    frame_results = [line for line in p2p_results if line.startswith("%i,%i,%i," % (scene, frame, obj_id))]
-                    if len(frame_results) == 0:
-                        continue
-
+                    # a) take n estimates
                     new_hypotheses = []
                     new_refiner_params = []
-                    for hi, line in enumerate(frame_results):
-                        parts = line.split(",")
-
-                        obj_confidence = float(parts[3])
-                        R = np.array([float(v) for v in parts[4].split(" ")]).reshape(3, 3)
-                        t = np.array([float(v) for v in parts[5].split(" ")]).reshape(3, 1)/1000
-
-                        estimate = [Rotation.from_dcm(R).as_quat(), t, obj_confidence]
-
+                    for hi, estimate in enumerate(estimates):
                         obj_T = np.matrix(np.eye(4))
-                        obj_T[:3, :3] = R
-                        obj_T[:3, 3] = t
-                        refiner_param = [rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate,
-                                         Verefine.ITERATIONS, None, None, None]
-                        new_hypotheses.append(Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, obj_mask, None, None, hi,
+                        obj_T[:3, :3] = Rotation.from_quat(estimate[0]).as_dcm()
+                        obj_T[:3, 3] = estimate[1].reshape(3, 1)
+                        obj_confidence = estimate[2]
+                        refiner_param = [rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, class_id, estimate,
+                                         Verefine.ITERATIONS, emb, cloud, None]
+                        new_hypotheses.append(Hypothesis("%0.2d" % scene, obj_T, obj_roi, obj_mask, None, None, hi,
                                                          obj_confidence, refiner_param=refiner_param))
+                        # new_refiner_params.append([rgb, depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate, Verefine.ITERATIONS, emb, cloud])
+
+                        if REF_MODE == "ICP":
+                            refiner_params[-1][-3:-1] = None, None
                     hypotheses += [new_hypotheses]
                     refiner_params += [new_refiner_params]
-
 
 
             # --- dependency graph
@@ -462,7 +422,7 @@ if __name__ == "__main__":
                 def point_inside(rect, pt):
                     return rect[0] <= pt[0] <= rect[2] and rect[1] <= pt[1] <= rect[3]
 
-                if PLOT_DEP:
+                if PLOT:
                     plt.imshow(labels)  # TODO value by id
 
                 # if SEGMENTATION == "MRCNN":
@@ -542,7 +502,7 @@ if __name__ == "__main__":
                         check |= point_inside(other_roi, [roi[2], roi[3]])  # br
                         check |= point_inside(other_roi, [roi[2], roi[1]])  # bl
 
-                        if PLOT_DEP:
+                        if PLOT:
                             plt.plot([roi[1], roi[3]], [roi[0], roi[0]], 'r-')  # t
                             plt.plot([roi[3], roi[3]], [roi[0], roi[2]], 'r-')  # r
                             plt.plot([roi[3], roi[1]], [roi[2], roi[2]], 'r-')  # b
@@ -604,7 +564,7 @@ if __name__ == "__main__":
                 tree = [label_strs[o] for o in order]
                 trees = [order]  # TODO per cluster
 
-                if PLOT_DEP:
+                if PLOT:
                     pos = dict()
                     for o in order:
                         pos[label_strs[o]] = [centers[o][1], centers[o][0]]
@@ -800,14 +760,13 @@ if __name__ == "__main__":
                         Verefine.OBSERVATION = observation
 
                         # TODO check if len(tree) > 1 and i != len(tree)-1 -> only if dependencies are physical, not for occlusion!
-                        Verefine.fit_fn = Verefine.fit_multi #if len(
+                        Verefine.fit_fn = Verefine.fit_single #if len(
                         #     tree) > 1 else Verefine.fit_single  # TODO or by mask overlap? is_dependent does not work well...
 
                         if Verefine.fit_fn == Verefine.fit_multi:
                             renderer.set_observation(scene_depth.reshape(480, 640, 1),
                                                      scene_normals.reshape(480, 640, 3),
-                                                     unique_mask.reshape(480, 640, 1))
-                                                     # obj_hypotheses[0].mask.reshape(480, 640, 1) == 0)  # TODO which?
+                                                     obj_hypotheses[0].mask.reshape(480, 640, 1) == 0)  # TODO or: unique_mask.reshape(480, 640, 1)?
                         else:
                             renderer.set_observation(scene_depth.reshape(480, 640, 1),
                                                          scene_normals.reshape(480, 640, 3))
@@ -917,13 +876,13 @@ if __name__ == "__main__":
                                                          scene_normals.reshape(480, 640, 3),
                                                          unique_mask.reshape(480, 640, 1))
 
-                                Verefine.fit_fn = Verefine.fit_multi #Verefine.fit_multi
+                                Verefine.fit_fn = Verefine.fit_single #Verefine.fit_multi
 
                                 if Verefine.fit_fn == Verefine.fit_multi:
                                     renderer.set_observation(scene_depth.reshape(480, 640, 1),
                                                              scene_normals.reshape(480, 640, 3),
-                                                             unique_mask.reshape(480, 640, 1))
-                                                             # obj_hypotheses[0].mask.reshape(480, 640, 1) == 0)  # TODO which?
+                                                             obj_hypotheses[0].mask.reshape(480, 640,
+                                                                                            1) == 0)  # TODO or: unique_mask.reshape(480, 640, 1)?
                                 else:
                                     renderer.set_observation(scene_depth.reshape(480, 640, 1),
                                                                  scene_normals.reshape(480, 640, 3))
@@ -1028,7 +987,7 @@ if __name__ == "__main__":
                     # with open("/home/dominik/projects/hsr-grasping/break/GT_lm-test.csv",
                     #           'a') as file:
                     # with open("/home/dominik/projects/hsr-grasping/break/%s%s%s%0.2d_lm-test.csv"
-                    with open("/home/dominik/projects/hsr-grasping/log/%s/%s/%sdf_ycbv-test.csv"
+                    with open("/home/dominik/projects/hsr-grasping/log/%s/%s/%sdf_lm-test.csv"
                               % (EST_MODE, MODE, "" if MODE != "BAB" else "%i-" % Verefine.HYPOTHESES_PER_OBJECT), 'a') as file:
                         parts = ["%0.2d" % scene, "%i" % frame, "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
                                  " ".join(["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),

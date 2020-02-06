@@ -742,7 +742,7 @@ class SceneBAB:
         self.pool = [[h] for h in hypotheses]# + [None] * len(hypotheses)]  # for the phys hypotheses
         if not isinstance(self.pool[0], list):
             self.pool = [self.pool]
-        # self.max_iter = ITERATIONS * len(hypotheses) + len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
+        self.max_iter = ITERATIONS * len(hypotheses) + len(hypotheses)#MAX_REFINEMENTS_PER_HYPOTHESIS + len(hypotheses)  # for initial play that is no refinement
 
         # ---
         # INIT
@@ -777,7 +777,7 @@ class SceneBAB:
         # iteration = np.sum(self.plays)
         # if iteration < self.max_iter:
         # SELECT
-        c = C  # TODO 1 used for exAPC  # TODO used 1e-3 for YCBV
+        c = C
 
         # assert (self.rewards == self.fits[:,:iteration].mean(axis=1)).sum() == iteration
         ucb_scores = [r + np.sqrt(c) * np.sqrt(np.log(np.sum(self.plays)) / n) for r, n in zip(self.rewards, self.plays)]

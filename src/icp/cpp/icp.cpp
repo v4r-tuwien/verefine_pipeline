@@ -72,10 +72,17 @@ Eigen::Matrix4f performICP(double* points_ren, unsigned long num_points_ren,
     PointCloudT::Ptr cloud_ren = cloud_to_pcd(points_ren, num_points_ren);
     PointCloudT::Ptr cloud_obs = cloud_to_pcd(points_obs, num_points_obs);
 
-
     // initialize ICP
     pcl::IterativeClosestPoint<PointT, PointT> icp;
-    icp.setMaximumIterations(max_iterations);
+//    // Set the max correspondence distance to 5cm (e.g., correspondences with higher distances will be ignored)
+//    icp.setMaxCorrespondenceDistance (0.05);
+    // Set the maximum number of iterations (criterion 1)
+    icp.setMaximumIterations (max_iterations);
+//    // Set the transformation epsilon (criterion 2)
+//    icp.setTransformationEpsilon (1e-8);
+//    // Set the euclidean distance difference epsilon (criterion 3)
+//    icp.setEuclideanFitnessEpsilon (1);
+
     icp.setInputCloud(cloud_ren);
     icp.setInputTarget(cloud_obs);
 
