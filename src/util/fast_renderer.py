@@ -109,7 +109,8 @@ void main() {
         
         float TAU = 20.0;
         float TAU_VIS = 10.0;
-        float ALPHA = 0.707; //15deg = 0.966, 45deg = 0.707, 60deg = 0.5
+        float PI = 3.141592653589793;
+        float ALPHA = 0.707; //1.2735; //PI/4.0; //15deg = 0.966, 45deg = 0.707, 60deg = 0.5
         
         float visible = 0.0;
         
@@ -126,7 +127,7 @@ void main() {
                 delta_d = 1.0 - min(1.0, dist/TAU);            
                 
                 float ang = clamp(dot(obs_normal, ren_normal), 0.0, 1.0);
-                delta_n = 1.0 - min(1.0, (1.0-ang)/ALPHA);
+                delta_n = 1.0 - min(1.0, (1.0-ang)/ALPHA); //acos(ang)/ALPHA
             }
         }
         
@@ -146,7 +147,8 @@ void main() {
 
         float TAU = 20.0;
         float TAU_VIS = 10.0;
-        float ALPHA = 0.707;
+        float PI = 3.141592653589793;
+        float ALPHA = 0.707;//PI/4.0;
         
         float visible = 0.0;
         
@@ -163,7 +165,7 @@ void main() {
                 delta_d = 1.0 - min(1.0, dist/TAU);            
                 
                 float ang = clamp(dot(obs_normal, ren_normal), 0.0, 1.0);
-                delta_n = 1.0 - min(1.0, (1.0-ang)/ALPHA);
+                delta_n = 1.0 - min(1.0, (1.0-ang)/ALPHA); //acos(ang)/ALPHA
             }
         }
         

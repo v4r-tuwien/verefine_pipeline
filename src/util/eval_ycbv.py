@@ -47,10 +47,17 @@ PATH_YCBV_ROOT = '/mnt/Data/datasets/YCB Video/YCB_Video_Dataset'
 
 TEST_TARGETS = "test_targets_bop19"
 
-MODE = "BASE"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi, {VFlist, VFtree} -> verefine
+MODE = "VFlist"  # "{BASE, PIR, BAB, MITASH} -> single, {BEST, ALLON, EVEN, BAB} -> multi, {VFlist, VFtree} -> verefine
+
+# EST_MODE = "DF"  # "GT", "DF", "P2P"
+# REF_MODE = "DF"  # "DF", "ICP"
+# SEGMENTATION = "PCNN"  # GT, PCNN, MRCNN
+
 EST_MODE = "P2P"  # "GT", "DF", "P2P"
 REF_MODE = "ICP"  # "DF", "ICP"
-SEGMENTATION = "PCNN"  # GT, PCNN, MRCNN
+SEGMENTATION = "MRCNN"  # GT, PCNN, MRCNN
+
+COMPUTE_DEPENDENCIES = False
 EXTRINSICS = "PLANE"  # GT, PLANE
 TAU = 20
 TAU_VIS = 10  # [mm]
@@ -89,24 +96,14 @@ obj_names = {
 if __name__ == "__main__":
 
     Verefine.HYPOTHESES_PER_OBJECT = 5
-    Verefine.ITERATIONS = 2
+    Verefine.ITERATIONS = 2 if EST_MODE == "DF" else 1
     Verefine.SIM_STEPS = 3
-    Verefine.C = np.sqrt(2)
+    Verefine.C = 1e-3 if "VF" in MODE and EST_MODE == "DF" else np.sqrt(2)
     Verefine.fit_fn = Verefine.fit_single
 
     dataset = YcbvDataset(base_path=PATH_YCBV_ROOT)
-    if SEGMENTATION == "MRCNN":
-        maskrcnn = MaskRcnnDetector()
-    # SCENES = dataset.objlist[1:]
-    #
-    # if len(sys.argv) > 1 and len(sys.argv) >= 3:
-    #     # refine mode, offset mode and offset size (0 is script path)
-    #     MODE = sys.argv[1]
-    #     MODE_OFF = sys.argv[2]
-    #     # OFFSETS = [int(sys.argv[3])]
-    #     SCENES = dataset.objlist[1:] if len(sys.argv) == 3 else [int(sys.argv[3])]
-    #     PLOT = False
-    # print("mode: %s -- scenes: %s" % (MODE, SCENES))
+    # if SEGMENTATION == "MRCNN":
+    #     maskrcnn = MaskRcnnDetector()
 
     df = None
     durations = []
@@ -122,7 +119,7 @@ if __name__ == "__main__":
         pir = None
 
     if EST_MODE == "P2P":
-        with open("/home/dominik/experiments/Pix2Pose/bop_result/pix2pose-iccv19_ycbv-test.csv", "r") as file:
+        with open("/home/dominik/projects/hsr-grasping/log/P2P/5-pix2pose-iccv19_ycbv-test.csv", "r") as file:
             p2p_results = file.readlines()
 
 
@@ -170,9 +167,9 @@ if __name__ == "__main__":
         # loop over frames in scene...
         frames = sorted(np.unique(scene_im_ids))
         for fi, frame in enumerate(frames):
-            # if scene < 55:
+            # if scene < 59:
             #     continue
-            # if scene == 55 and frame < 1666:
+            # if scene == 59 and frame < 492:
             #     continue
             print("   frame %i (%i/%i)..." % (frame, fi+1, len(frames)))
 
@@ -204,23 +201,48 @@ if __name__ == "__main__":
                 labels = meta['labels']
                 rois = meta['rois']
             elif SEGMENTATION == "MRCNN":
-                obj_ids_, rois, masks, scores = maskrcnn.detect(rgb)
+                # obj_ids_, rois, masks, scores = maskrcnn.detect(rgb)
+                #
+                # to_delete = []
+                # test = [masks[:, :, i] for i in range(len(scores))]
+                # for mi, (mask, score) in enumerate(zip(test, scores)):
+                #     for other_mi, (other_mask, other_score) in enumerate(zip(test, scores)):
+                #         if mi == other_mi:
+                #             continue
+                #         if np.logical_and(mask>0, other_mask>0).sum() > (mask>0).sum() * 0.5:
+                #             to_delete.append(mi if score < other_score else other_mi)
+                #
+                # masks = np.dstack([t for mi, t in enumerate(test) if mi not in to_delete])
+                # obj_ids_ = [o for mi, o in enumerate(obj_ids_) if mi not in to_delete]
+                # rois = [roi for mi, roi in enumerate(rois) if mi not in to_delete]
+                #
+                # rois = [[0, obj_id] + [roi[1], roi[0], roi[3], roi[2]] for obj_id, roi in zip(obj_ids_, rois)]
+                # labels = masks.sum(axis=2)
 
-                to_delete = []
-                test = [masks[:, :, i] for i in range(len(scores))]
-                for mi, (mask, score) in enumerate(zip(test, scores)):
-                    for other_mi, (other_mask, other_score) in enumerate(zip(test, scores)):
-                        if mi == other_mi:
-                            continue
-                        if np.logical_and(mask>0, other_mask>0).sum() > (mask>0).sum() * 0.5:
-                            to_delete.append(mi if score < other_score else other_mi)
+                frame_results = [line for line in p2p_results if line.startswith("%i,%i," % (scene, frame))][::5]
 
-                masks = np.dstack([t for mi, t in enumerate(test) if mi not in to_delete])
-                obj_ids_ = [o for mi, o in enumerate(obj_ids_) if mi not in to_delete]
-                rois = [roi for mi, roi in enumerate(rois) if mi not in to_delete]
+                import glob
+                ris = sorted(
+                    glob.glob("/mnt/Data/datasets/ycbv_segmentation_p2p/%0.2d/%0.4d_*valid.png" % (scene, frame)))
+                ris = np.unique([int(ri.split("_")[-2]) for ri in ris])
 
-                rois = [[0, obj_id] + [roi[1], roi[0], roi[3], roi[2]] for obj_id, roi in zip(obj_ids_, rois)]
-                labels = masks.sum(axis=2)
+                mask_paths = sorted(
+                    glob.glob("/mnt/Data/datasets/ycbv_segmentation_p2p/%0.2d/%0.4d_*-detect.png" % (scene, frame)))
+                masks = []
+                rois = []
+                for frame_result, mask_path in zip(frame_results, mask_paths):
+                    mask = np.array(PIL.Image.open(mask_path))
+                    mask_ids = np.argwhere(mask > 0)
+                    obj_id = int(frame_result.split(",")[2])
+
+                    roi = [np.min(mask_ids[:, 0]), np.min(mask_ids[:, 1]),
+                           np.max(mask_ids[:, 0]), np.max(mask_ids[:, 1])]
+                    roi = [0, obj_id, roi[1], roi[0], roi[3], roi[2]]
+
+                    masks.append(mask)
+                    rois.append(roi)
+                masks = np.dstack(masks)
+                labels = masks.sum(axis=2) > 0
             else:
                 raise ValueError("SEGMENTATION can only be GT or PCNN")
 
@@ -391,6 +413,7 @@ if __name__ == "__main__":
 
                 if SEGMENTATION == "MRCNN":
                     obj_mask = masks[:, :, oi]
+                    ri = ris[oi]
                 else:
                     obj_mask = labels == obj_id
 
@@ -433,94 +456,73 @@ if __name__ == "__main__":
                     frame_results = [line for line in p2p_results if line.startswith("%i,%i,%i," % (scene, frame, obj_id))]
                     if len(frame_results) == 0:
                         continue
+                    # n_instances = np.count_nonzero(np.array(rois)[:oi,1] == obj_id)
+                    n_hypotheses = int(np.sum([len(hypotheses[ii]) for ii in range(oi)
+                                               if np.array(rois)[ii,1] == obj_id]))
+                    frame_results = frame_results[n_hypotheses:n_hypotheses+5]
+
+                    hypotheses_paths = sorted(glob.glob("/mnt/Data/datasets/ycbv_segmentation_p2p/%0.2d/%0.4d_%0.2d_*-valid.png" % (scene, frame, ri)))
 
                     new_hypotheses = []
-                    new_refiner_params = []
-                    for hi, line in enumerate(frame_results):
+                    for hi, (line, path) in enumerate(zip(frame_results, hypotheses_paths)):
                         parts = line.split(",")
 
                         obj_confidence = float(parts[3])
                         R = np.array([float(v) for v in parts[4].split(" ")]).reshape(3, 3)
                         t = np.array([float(v) for v in parts[5].split(" ")]).reshape(3, 1)/1000
 
-                        estimate = [Rotation.from_dcm(R).as_quat(), t, obj_confidence]
-
                         obj_T = np.matrix(np.eye(4))
                         obj_T[:3, :3] = R
                         obj_T[:3, 3] = t
-                        refiner_param = [rgb, ref_depth, camera_intrinsics, obj_roi, obj_mask, obj_id, estimate,
+
+                        if not os.path.exists(path):
+                            print("path %s for %i,%i,%i,%i does not exist" % (path, scene, frame, ri, hi))
+                        obj_valid = np.array(PIL.Image.open(path))
+                        union = np.logical_or(obj_valid, obj_mask)
+                        if union.sum() == 0:
+                            obj_confidence = 0
+                        else:
+                            mask_iou = np.sum(np.logical_and(obj_valid, obj_mask))/union.sum()
+                            mask_confidence = 1.0  # TODO from mask rcnn
+                            obj_confidence = mask_confidence * obj_confidence * mask_iou * 1000
+                        union_mask = np.logical_and(union, np.logical_and(depth>200, depth<3000))
+
+                        estimate = [Rotation.from_dcm(R).as_quat(), t, obj_confidence]
+                        refiner_param = [rgb, depth, camera_intrinsics, obj_roi, union_mask, obj_id, estimate,
                                          Verefine.ITERATIONS, None, None, None]
-                        new_hypotheses.append(Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, obj_mask, None, None, hi,
+                        new_hypotheses.append(Hypothesis("%0.2d" % obj_id, obj_T, obj_roi, union_mask, None, None, hi,
                                                          obj_confidence, refiner_param=refiner_param))
+
+                    # sort by confidence
+                    confidences = [h.confidence for h in new_hypotheses]
+                    best_hs = np.argsort(confidences)[::-1][:Verefine.HYPOTHESES_PER_OBJECT]
+                    new_hypotheses = [new_hypotheses[hi] for hi in best_hs]
+
                     hypotheses += [new_hypotheses]
-                    refiner_params += [new_refiner_params]
 
 
 
             # --- dependency graph
             if MODE in ["VFlist", "VFtree"]:
-                def point_inside(rect, pt):
-                    return rect[0] <= pt[0] <= rect[2] and rect[1] <= pt[1] <= rect[3]
-
                 if PLOT_DEP:
                     plt.imshow(labels)  # TODO value by id
 
-                # if SEGMENTATION == "MRCNN":
-                # a) as is
-                obj_ids_ = [roi[1] for roi in rois]
-                masks = [hs[0].mask for hs in hypotheses]
+                trees = [list(range(len(hypotheses)))]
 
-                label_count = {}
-                label_strs = []
-                for o in obj_ids_:
-                    if o not in label_count:
-                        label_count[o] = 0
-                    label_strs.append("%i (%i)" % (o, label_count[o]))
-                    label_count[o] += 1
-                #
-                # if SEGMENTATION == "PCNN":
-                #     # # b) multiple instances
-                #     from skimage import measure
-                #
-                #     connected_labels = measure.label(labels)
-                #     connected_ids = sorted(np.unique(connected_labels))[1:]
-                #     new_labels = np.zeros_like(labels)
-                #     label_count = {}
-                #     obj_ids_ = []
-                #     masks = []
-                #     label_strs = []
-                #     for connected_id in connected_ids:
-                #         connected_mask = connected_labels == connected_id
-                #         if (connected_mask > 0).sum() < 1000:
-                #             continue
-                #         masks.append(connected_mask)
-                #         label_id = int(np.unique(labels[connected_mask])[0])
-                #         obj_ids_.append(label_id)
-                #         if label_id in label_count:
-                #             label_count[label_id] += 1
-                #             label_strs.append("%i (%i)" % (label_id, label_count[label_id]))
-                #             label_id += 30 * label_count[label_id]
-                #         else:
-                #             label_count[label_id] = 0
-                #             label_strs.append("%i (%i)" % (label_id, label_count[label_id]))
-                #         new_labels[connected_mask] = label_id
-                #         # plt.imshow(new_labels)
-
-                rois = [list(np.min(np.argwhere(mask > 0), axis=0)) + list(np.max(np.argwhere(mask > 0), axis=0)) for
-                        mask in masks]
-                overlapping = []
-                occluded = []
-                supporting = []
-                centers = []
-                for roi, mask in zip(rois, masks):
-                    centers.append(np.mean(np.argwhere(mask > 0), axis=0))
-
-                    umap = np.array([[j for _ in range(640)] for j in range(480)])
-                    vmap = np.array([[i for i in range(640)] for _ in range(480)])
+                if COMPUTE_DEPENDENCIES:
+                    # if SEGMENTATION == "MRCNN":
+                    # a) as is
+                    obj_ids_ = [roi[1] for roi in rois]
+                    masks = [hs[0].mask for hs in hypotheses]
+                    masks_world = []
 
 
                     # TODO to world coords
+                    # TODO to world coords
                     def to_world(px_mask):
+                        umap = np.array([[j for _ in range(640)] for j in range(480)])
+                        vmap = np.array([[i for i in range(640)] for _ in range(480)])
+
                         fx, fy, cx, cy = camera_intrinsics[0, 0], camera_intrinsics[1, 1], camera_intrinsics[0, 2], \
                                          camera_intrinsics[1, 2]
                         valid_mask = np.logical_and(px_mask > 0, depth > 0)
@@ -531,93 +533,261 @@ if __name__ == "__main__":
                                       camera_extrinsics[:3, :3]) + camera_extrinsics.I[:3, 3].T
 
 
-                    center_z = to_world(mask)[:, 2].mean()
+                    def to_cam(world_mask, px_mask):
+                        fx, fy, cx, cy = camera_intrinsics[0, 0], camera_intrinsics[1, 1], camera_intrinsics[0, 2], \
+                                         camera_intrinsics[1, 2]
+                        cam_mask = np.dot(world_mask - camera_extrinsics.I[:3, 3].T,
+                                          camera_extrinsics[:3, :3].T)
+                        D_masked = cam_mask[:, 2]
+                        X_masked = np.round(cam_mask[:, 0] * fx / D_masked + cx).astype(np.int32)
+                        Y_masked = np.round(cam_mask[:, 1] * fy / D_masked + cy).astype(np.int32)
+                        mask = np.zeros_like(px_mask)
+                        mask[Y_masked, X_masked] = 1
+                        mask[np.logical_and(depth == 0, px_mask)] = 1
+                        return mask
 
-                    overlap_obj = []
-                    occluded_obj = []
-                    supporting_obj = []
-                    for other_roi, other_mask in zip(rois, masks):
-                        check = point_inside(other_roi, [roi[0], roi[1]])  # tl
-                        check |= point_inside(other_roi, [roi[0], roi[3]])  # tr
-                        check |= point_inside(other_roi, [roi[2], roi[3]])  # br
-                        check |= point_inside(other_roi, [roi[2], roi[1]])  # bl
+                    for mask in masks:
+                        mask_world = to_world(mask)
+                        from scipy.spatial import cKDTree as KDTree
 
-                        if PLOT_DEP:
-                            plt.plot([roi[1], roi[3]], [roi[0], roi[0]], 'r-')  # t
-                            plt.plot([roi[3], roi[3]], [roi[0], roi[2]], 'r-')  # r
-                            plt.plot([roi[3], roi[1]], [roi[2], roi[2]], 'r-')  # b
-                            plt.plot([roi[1], roi[1]], [roi[2], roi[0]], 'r-')  # l
+                        m_tree = KDTree(mask_world)
+                        indices = m_tree.query_ball_point(mask_world, r=0.005)
+                        indices = [i for i, ind in enumerate(indices) if len(ind) > 40]
+                        if len(indices) > 0:
+                            mask_world = mask_world[indices]
+                            new_obj_mask = to_cam(mask_world, mask)
+                            # plt.imshow(obj_mask.astype(np.int32) + new_obj_mask)
+                            # plt.show()
 
-                        overlap_obj.append(check)
-                        occluded_obj.append(check and np.mean(mask) > np.mean(other_mask))
-                        center = np.mean(np.argwhere(mask > 0), axis=0)
-                        other_center = np.mean(np.argwhere(other_mask > 0), axis=0)
+                            mask = new_obj_mask
+                        masks_world.append(mask_world)
 
-                        other_center_z = to_world(other_mask)[:, 2].mean()
-                        supporting_obj.append(bool(center_z < other_center_z))
-                    overlapping.append(overlap_obj)
-                    occluded.append(occluded_obj)
-                    supporting.append(supporting_obj)
-                overlapping = np.logical_or(np.array(overlapping), np.array(overlapping).T)
 
-                # TODO cluster
-                # # bandwidth reduction -> permutation s.t. distance on nonzero entries from the center diagonal is minimized
-                # adjacency = np.uint8(overlapping)
-                # from scipy.sparse import csgraph
-                # r = csgraph.reverse_cuthill_mckee(csgraph.csgraph_from_dense(adjacency), True)
+                    label_count = {}
+                    label_strs = []
+                    for o in obj_ids_:
+                        if o not in label_count:
+                            label_count[o] = 0
+                        label_strs.append("%i (%i)" % (o, label_count[o]))
+                        label_count[o] += 1
+                    #
+                    # if SEGMENTATION == "PCNN":
+                    #     # # b) multiple instances
+                    #     from skimage import measure
+                    #
+                    #     connected_labels = measure.label(labels)
+                    #     connected_ids = sorted(np.unique(connected_labels))[1:]
+                    #     new_labels = np.zeros_like(labels)
+                    #     label_count = {}
+                    #     obj_ids_ = []
+                    #     masks = []
+                    #     label_strs = []
+                    #     for connected_id in connected_ids:
+                    #         connected_mask = connected_labels == connected_id
+                    #         if (connected_mask > 0).sum() < 1000:
+                    #             continue
+                    #         masks.append(connected_mask)
+                    #         label_id = int(np.unique(labels[connected_mask])[0])
+                    #         obj_ids_.append(label_id)
+                    #         if label_id in label_count:
+                    #             label_count[label_id] += 1
+                    #             label_strs.append("%i (%i)" % (label_id, label_count[label_id]))
+                    #             label_id += 30 * label_count[label_id]
+                    #         else:
+                    #             label_count[label_id] = 0
+                    #             label_strs.append("%i (%i)" % (label_id, label_count[label_id]))
+                    #         new_labels[connected_mask] = label_id
+                    #         # plt.imshow(new_labels)
+
+                    rois = [list(np.min(np.argwhere(mask > 0), axis=0)) + list(np.max(np.argwhere(mask > 0), axis=0)) for
+                            mask in masks]
+
+                    overlapping = []
+                    occluded = []
+                    supported = []
+                    for roi, mask, mask_world in zip(rois, masks, masks_world):
+
+                        umap = np.array([[j for _ in range(640)] for j in range(480)])
+                        vmap = np.array([[i for i in range(640)] for _ in range(480)])
+
+
+                        def overlap(rect, rect2):
+                            top1, left1, bottom1, right1 = rect
+                            top2, left2, bottom2, right2 = rect2
+
+                            outside = top1 > bottom2 or bottom1 < top2  # above
+                            outside |= bottom1 < top2 or top1 > bottom2  # below
+                            outside |= left1 > right2 or right1 < left2  # left
+                            outside |= right1 < left2 or left1 > right2  # right
+                            return not outside
+
+
+                        def in_hull(arr, arr2):
+                            from scipy.spatial import ConvexHull
+                            try:
+                                hull = ConvexHull(arr)
+                                hull2 = ConvexHull(arr2)
+                            except Exception as ex:
+                                return False  # -> if one cloud has too little points, there is probably no overlap'-
+
+                            overlap = False
+                            for pt in hull2.points[hull2.vertices]:
+                                if list(hull.vertices) == list(
+                                        ConvexHull(np.append(arr, pt.reshape(1, -1), axis=0)).vertices):
+                                    overlap = True
+                                    break
+                            return overlap
+
+                        # mask_world = to_world(mask)
+                        roi_world = list(np.min(mask_world, axis=0).flat)[:2] + list(np.max(mask_world, axis=0).flat)[:2]
+                        center_z = np.min(mask_world[:, 2])
+
+                        overlap_obj = []
+                        occluded_obj = []
+                        supported_obj = []
+                        for other_roi, other_mask, other_mask_world in zip(rois, masks, masks_world):
+                            if other_roi == roi:
+                                overlap_obj.append(True)
+                                occluded_obj.append(True)
+                                supported_obj.append(True)
+                                continue
+                            # overlap_cam = overlap(roi, other_roi)
+                            overlap_cam = in_hull(np.argwhere(mask>0), np.argwhere(other_mask>0))
+                            occluded_ = overlap_cam and \
+                                        np.median(depth[np.logical_and(mask, depth>0)]) > \
+                                        np.median(depth[np.logical_and(other_mask, depth>0)])
+
+                            # ----
+                            # other_mask_world = to_world(other_mask)
+                            roi_world_other = list(np.min(other_mask_world, axis=0).flat)[:2] + list(np.max(other_mask_world, axis=0).flat)[:2]
+                            center_z_other = np.min(other_mask_world[:, 2], axis=0)
+
+                            # overlap_world = overlap(roi_world, roi_world_other)
+                            overlap_world = in_hull(mask_world[:, :2], other_mask_world[:, :2])
+                            supported_ = overlap_world and center_z < center_z_other
+
+                            # ---
+                            overlap_obj.append(occluded_ or supported_)#overlap_cam or overlap_world)  #
+                            occluded_obj.append(occluded_)
+                            supported_obj.append(supported_)
+
+                            if PLOT_DEP and overlap_obj[-1]:
+                                plt.subplot(1, 3, 1)
+                                plt.imshow(rgb)
+                                plt.plot([roi[1], roi[3]], [roi[0], roi[0]], 'r-')  # t
+                                plt.plot([roi[3], roi[3]], [roi[0], roi[2]], 'r-')  # r
+                                plt.plot([roi[3], roi[1]], [roi[2], roi[2]], 'r-')  # b
+                                plt.plot([roi[1], roi[1]], [roi[2], roi[0]], 'r-')  # l
+                                plt.plot([other_roi[1], other_roi[3]], [other_roi[0], other_roi[0]], 'g-')  # t
+                                plt.plot([other_roi[3], other_roi[3]], [other_roi[0], other_roi[2]], 'g-')  # r
+                                plt.plot([other_roi[3], other_roi[1]], [other_roi[2], other_roi[2]], 'g-')  # b
+                                plt.plot([other_roi[1], other_roi[1]], [other_roi[2], other_roi[0]], 'g-')  # l#
+                                plt.title(("supported  " if supported_obj[-1] else "") + ("occluded  " if occluded_obj[-1] else ""))
+                                plt.subplot(1, 3, 2)
+                                vis = np.zeros_like(depth)
+                                vis[np.logical_and(mask, depth > 0)] = 1
+                                vis[np.logical_and(other_mask, depth > 0)] = 2
+                                plt.title("%0.3f vs %0.3f" % (np.mean(depth[np.logical_and(mask, depth > 0)]),
+                                                              np.mean(depth[np.logical_and(other_mask, depth > 0)])))
+                                plt.imshow(vis)
+                                plt.subplot(1, 3, 3)
+                                plt.plot(mask_world[:, 0], mask_world[:, 1], 'r.')
+                                plt.plot(other_mask_world[:, 0], other_mask_world[:, 1], '.', color=(0.0, 0.0, 1.0, 0.2))
+                                plt.show()
+                        overlapping.append(overlap_obj)
+                        occluded.append(occluded_obj)
+                        supported.append(supported_obj)
+                    overlapping = np.uint8(np.logical_or(np.array(overlapping), np.array(overlapping).T))
+                    occluded = np.uint8(np.array(occluded))
+                    supported = np.uint8(np.array(supported))
+
+                    # -- cluster
+                    def cluster_matrix(adjacency):
+                        # bandwidth reduction -> permutation s.t. distance on nonzero entries from the center diagonal is minimized
+                        from scipy.sparse import csgraph
+                        r = csgraph.reverse_cuthill_mckee(csgraph.csgraph_from_dense(adjacency), True)
+                        # via http://raphael.candelier.fr/?blog=Adj2cluster
+                        # and http://ciprian-zavoianu.blogspot.com/2009/01/project-bandwidth-reduction.html
+                        # -> results in blocks in the adjacency matrix that correspond with the clusters
+                        # -> iteratively extend the block while the candidate region contains nonzero elements (i.e. is connected)
+                        clusters = [[r[0]]]
+                        for i in range(1, len(r)):
+                            if np.any(adjacency[clusters[-1], r[i]]):  # ri connected to current cluster? -> add ri to cluster
+                                clusters[-1].append(r[i])
+                            else:  # otherwise: start a new cluster with ri
+                                clusters.append([r[i]])
+                        # add clustered objects to hypotheses clusters
+                        adjacencies = []
+                        for cluster in clusters:
+                            cluster_adjacency = {}
+                            for ci in cluster:
+                                # TODO write this python-y
+                                identifier = ci  # obj_ids[ci]
+                                cluster_adjacency[identifier] = []
+                                for ci_ in cluster:
+                                    if ci_ == ci:
+                                        continue
+                                    if adjacency[ci, ci_] == 1:
+                                        other_identifier = ci_  # obj_ids[ci_]
+                                        cluster_adjacency[identifier].append(other_identifier)
+                            adjacencies.append(cluster_adjacency)
+                        return adjacencies
+
+                    trees = [list(cluster.keys()) for cluster in cluster_matrix(overlapping)]
+
+
+                    def suborder(arr):
+                        test = np.array(np.logical_or(arr, np.eye(len(arr))))
+                        order = []
+                        for i in range(len(arr)):
+                            # print(test)
+                            best = np.argmax(np.sum(test, axis=1))
+                            if np.sum(test[best, :]) == 0:
+                                print("TODO here consider occlusion")
+                            order.append(best)
+                            test[best, :] = False
+                        return order
+
+
+                    ordered_trees = []
+                    for ti, tree in enumerate(trees):
+                        if len(tree) == 1:
+                            ordered_trees.append(tree)
+                            print("tree %i: %s" % (ti, obj_names[obj_ids_[tree[0]]]))
+                        else:
+                            # cluster by support relationship
+                            supported_trees = [[tree[c] for c in cluster.keys()] for cluster in
+                                               cluster_matrix(supported[:, tree][tree, :])]
+                            # get base object per cluster
+                            supporting_trees = [
+                                [supported_tree[id] for id in suborder(supported[:, supported_tree][supported_tree, :])[::-1]]
+                                for supported_tree in supported_trees
+                            ]
+                            supporting = [supporting_tree[0] if isinstance(supporting_tree, list) else supporting_tree for supporting_tree in supported_trees]
+                            # cluster base objects by occlusion
+                            occluding = suborder(occluded[:, supporting][supporting, :])[::-1]
+                            # get tree order
+                            ordered_tree = list(np.concatenate(np.array(supporting_trees)[occluding]).flat)
+
+                            print("tree %i: %s" % (ti, [obj_names[obj_ids_[c]] for c in ordered_tree]))
+
+                            ordered_trees.append(ordered_tree)
+                    trees = ordered_trees
+
+                # if PLOT_DEP:
+                #     pos = dict()
+                #     for o in order:
+                #         pos[label_strs[o]] = [centers[o][1], centers[o][0]]
+                #     import networkx as nx
                 #
-                # # via http://raphael.candelier.fr/?blog=Adj2cluster
-                # # and http://ciprian-zavoianu.blogspot.com/2009/01/project-bandwidth-reduction.html
-                # # -> results in blocks in the adjacency matrix that correspond with the clusters
-                # # -> iteratively extend the block while the candidate region contains nonzero elements (i.e. is connected)
-                # clusters = [[r[0]]]
-                # for i in range(1, len(r)):
-                #     if np.any(adjacency[clusters[-1], r[i]]):  # ri connected to current cluster? -> add ri to cluster
-                #         clusters[-1].append(r[i])
-                #     else:  # otherwise: start a new cluster with ri
-                #         clusters.append([r[i]])
-                #
-                # # add clustered objects to hypotheses clusters
-                # adjacencies = []
-                # for cluster in clusters:
-                #     cluster_pool = {}
-                #     cluster_adjacency = {}
-                #     for ci in cluster:
-                #         # TODO write this python-y
-                #         cluster_adjacency[obj_str] = []
-                #         for ci_ in cluster:
-                #             if ci_ == ci:
-                #                 continue
-                #             if adjacency[ci, ci_] == 1:
-                #                 cluster_adjacency[obj_str].append(obj_ids[ci_])
-                #     adjacencies.append(cluster_adjacency)
-
-                test = np.array(np.logical_or(supporting, np.eye(len(supporting))))
-                order = []
-                for i in range(len(supporting)):
-                    # print(test)
-                    best = np.argmax(np.sum(test, axis=1))
-                    if np.sum(test[best, :]) == 0:
-                        print("TODO here consider occlusion")
-                    order.append(best)
-                    test[best, :] = False
-                tree = [label_strs[o] for o in order]
-                trees = [order]  # TODO per cluster
-
-                if PLOT_DEP:
-                    pos = dict()
-                    for o in order:
-                        pos[label_strs[o]] = [centers[o][1], centers[o][0]]
-                    import networkx as nx
-
-                    G = nx.DiGraph()
-                    for li, label_str in enumerate(tree):
-                        G.add_node(label_str)
-                        if li < len(tree) - 1:
-                            G.add_edge(label_str, tree[li + 1])
-                    nx.draw(G, pos=pos, with_labels=True)
-                    plt.show()
-                    # continue
+                #     G = nx.DiGraph()
+                #     for li, label_str in enumerate(tree):
+                #         G.add_node(label_str)
+                #         if li < len(tree) - 1:
+                #             G.add_edge(label_str, tree[li + 1])
+                #     nx.draw(G, pos=pos, with_labels=True)
+                #     plt.show()
+                #     # continue
 
             # --- refine
             final_hypotheses = []
@@ -800,7 +970,7 @@ if __name__ == "__main__":
                         Verefine.OBSERVATION = observation
 
                         # TODO check if len(tree) > 1 and i != len(tree)-1 -> only if dependencies are physical, not for occlusion!
-                        Verefine.fit_fn = Verefine.fit_multi #if len(
+                        Verefine.fit_fn = Verefine.fit_single #if len(
                         #     tree) > 1 else Verefine.fit_single  # TODO or by mask overlap? is_dependent does not work well...
 
                         if Verefine.fit_fn == Verefine.fit_multi:
@@ -842,11 +1012,6 @@ if __name__ == "__main__":
 
                     # 1) individual isolated object -> run BABn
                     if len(tree) == 1:
-                        ind_1.append(ind)
-                        ind += 1
-                        final_hypotheses.append(None)
-                        continue
-
                         hi = tree[0]
                         obj_hypotheses = hypotheses[hi - 1]
 
@@ -882,7 +1047,7 @@ if __name__ == "__main__":
                         # MCTS loop
                         # obj_masks = [obj_depths[oi-1] > 0 for oi in tree]
                         babs = [None] * len(tree)
-                        scene_level_iter = Verefine.HYPOTHESES_PER_OBJECT #* int(np.ceil(len(tree)/2)) #50 if len(tree) == 3 else 25
+                        scene_level_iter = Verefine.HYPOTHESES_PER_OBJECT * int(np.ceil(len(tree)/2)) #50 if len(tree) == 3 else 25
                         excluded = []
                         for si in range(scene_level_iter):
                             fixed = []
@@ -913,11 +1078,11 @@ if __name__ == "__main__":
                                     "mask_others": unique_mask
                                 }
                                 Verefine.OBSERVATION = observation
-                                renderer.set_observation(scene_depth.reshape(480, 640, 1),
-                                                         scene_normals.reshape(480, 640, 3),
-                                                         unique_mask.reshape(480, 640, 1))
+                                # renderer.set_observation(scene_depth.reshape(480, 640, 1),
+                                #                          scene_normals.reshape(480, 640, 3),
+                                #                          unique_mask.reshape(480, 640, 1))
 
-                                Verefine.fit_fn = Verefine.fit_multi #Verefine.fit_multi
+                                Verefine.fit_fn = Verefine.fit_single #Verefine.fit_multi#
 
                                 if Verefine.fit_fn == Verefine.fit_multi:
                                     renderer.set_observation(scene_depth.reshape(480, 640, 1),
@@ -934,13 +1099,13 @@ if __name__ == "__main__":
 
                                 hi, h_sel, fit = babs[i].refine(fixed)
 
-                                if Verefine.fit_fn == Verefine.fit_single and h_sel.confidence < 0.05:
-                                    excluded.append(oi)
-                                    while np.sum(babs[i].plays) < babs[i].max_iter:
-                                        hi, h_sel, fit = babs[i].refine(fixed)
-                                        babs[i].backpropagate(hi, fit)
-                                    final_hypotheses.append(h_sel)
-                                    continue
+                                # if Verefine.fit_fn == Verefine.fit_single and h_sel.confidence < 0.05:
+                                #     excluded.append(oi)
+                                #     while np.sum(babs[i].plays) < babs[i].max_iter:
+                                #         hi, h_sel, fit = babs[i].refine([])
+                                #         babs[i].backpropagate(hi, fit)
+                                #     final_hypotheses.append(h_sel)
+                                #     continue
 
                                 # update mask per object
                                 h_depth = h_sel.render(observation, 'depth')[1] * 1000
@@ -983,9 +1148,12 @@ if __name__ == "__main__":
                         for i, oi in enumerate(tree):
                             if oi in excluded:
                                 continue
-                            # hypothesis, _, _ = babs[i].get_best()  # TODO adapt to be based on reward
-                            # hypothesis = babs[i].best
-                            hypothesis = babs[i].pool[np.argmax([babs[i].rewards])][-1]
+
+                            # a) based on object fit
+                            hypothesis, _, _ = babs[i].get_best()
+                            # b) based on scene fit
+                            # hypothesis = babs[i].pool[np.argmax(babs[i].rewards)][-1]  #[np.mean(rew[-3::]) for rew in babs[i].rewards]
+
                             final_hypotheses.append(hypothesis)
 
                         refinements += scene_level_iter * len(tree)
@@ -1028,8 +1196,9 @@ if __name__ == "__main__":
                     # with open("/home/dominik/projects/hsr-grasping/break/GT_lm-test.csv",
                     #           'a') as file:
                     # with open("/home/dominik/projects/hsr-grasping/break/%s%s%s%0.2d_lm-test.csv"
-                    with open("/home/dominik/projects/hsr-grasping/log/%s/%s/%sdf_ycbv-test.csv"
-                              % (EST_MODE, MODE, "" if MODE != "BAB" else "%i-" % Verefine.HYPOTHESES_PER_OBJECT), 'a') as file:
+                    with open("/home/dominik/projects/hsr-grasping/log/%s/%s/%s%s_ycbv-test.csv"
+                              % (EST_MODE, MODE, "" if MODE != "BAB" else "%i-" % Verefine.HYPOTHESES_PER_OBJECT,
+                                 "df" if EST_MODE == "DF" else "p2p"), 'a') as file:
                         parts = ["%0.2d" % scene, "%i" % frame, "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
                                  " ".join(["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
                                  " ".join(["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),

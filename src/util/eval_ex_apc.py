@@ -46,11 +46,11 @@ PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset/"
 # PATH_APC = "/home/dominik/experiments/PhysimGlobalPose/src/dataset_baseline3_mcts-60s-default/"
 
 POOL = "clusterPose"  # "allPose" for Super4PCS(?) ordered by LCP, "clusterPose" for cluster hypotheses (exactly 25), "super4pcs" for Super4PCS (best LCP), "search" for MCTS
-ALL_COSTS = True
+ALL_COSTS = False
 num_scenes = 42
 PLOT = False
 
-MODE = "BASE" if POOL in ["super4pcs", "search"] else "VFlist"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
+MODE = "BASE" if POOL in ["super4pcs", "search"] else "VFtree"  # "BASE", "PIR", "BAB", "VFlist", "VFtree"
 EST_MODE = "PCS"
 REF_MODE = "" if POOL in ["super4pcs", "search"] else "ICP"
 
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     errors_translation, errors_rotation = [], []
     errors_ssd, errors_adi, errors_vsd = [], [], []
 
-    # if MODE != "BASE" or REF_MODE == "ICP":
+        # if MODE != "BASE" or REF_MODE == "ICP":
     renderer = Renderer(dataset, recompute_normals=True)
     Verefine.RENDERER = renderer
         # renderer.create_egl_context()
@@ -223,6 +223,99 @@ if __name__ == "__main__":
             continue
         symInfos[v['classId']] = v['symmetry']
 
+    # # convert to BOP format
+    # model_info = {}
+    # for i in range(0, 11):
+    #     mins = list((dataset.pcd[i].min(axis=0) * 1000).flat)
+    #     sizes = list(dataset.pcd[i].max(axis=0) * 1000 - dataset.pcd[i].min(axis=0) * 1000)
+    #
+    #     from numpy import random, nanmax, argmax, unravel_index
+    #     from scipy.spatial.distance import pdist, squareform
+    #
+    #     A = dataset.pcd[i]
+    #     D = pdist(A)
+    #     D = squareform(D)
+    #     diameter, [I_row, I_col] = nanmax(D), unravel_index(argmax(D), D.shape)
+    #     diameter *= 1000
+    #
+    #
+    #     def sym_steps(nfo):
+    #         if nfo == 90:
+    #             n = 4
+    #             d = np.deg2rad(90)
+    #         elif nfo == 180:
+    #             n = 2
+    #             d = np.deg2rad(180)
+    #         elif nfo == 360:
+    #             n = 1
+    #             d = np.deg2rad(360)
+    #         else:
+    #             n = 1
+    #             d = 0
+    #         return n, d
+    #
+    #
+    #     xn, dx = sym_steps(symInfos[i + 1][0])
+    #     yn, dy = sym_steps(symInfos[i + 1][1])
+    #     zn, dz = sym_steps(symInfos[i + 1][2])
+    #     symmetries_continuous = []
+    #     symmetries_discrete = []
+    #     for x in range(xn):
+    #         if x == 0 and dx == np.deg2rad(360):  # continuous
+    #             symmetries_continuous.append(
+    #                 {
+    #                     "axis": [1, 0, 0],
+    #                     "offset": [0, 0, 0]
+    #                 }
+    #             )
+    #
+    #         for y in range(yn):
+    #             if y == 0 and dy == np.deg2rad(360):  # continuous
+    #                 symmetries_continuous.append(
+    #                     {
+    #                         "axis": [0, 1, 0],
+    #                         "offset": [0, 0, 0]
+    #                     }
+    #                 )
+    #
+    #             for z in range(zn):
+    #                 if z == 0 and dz == np.deg2rad(360):  # continuous
+    #                     symmetries_continuous.append(
+    #                         {
+    #                             "axis": [0, 0, 1],
+    #                             "offset": [0, 0, 0]
+    #                         }
+    #                     )
+    #
+    #                 T = np.eye(4)
+    #                 T[:3, :3] = Rotation.from_euler('xyz', [x * dx, y * dy, z * dz]).as_dcm()
+    #                 if not np.allclose(T, np.eye(4)):
+    #                     symmetries_discrete.append(list(T.reshape(16)))
+    #
+    #     # print(i+1)
+    #     # print(diameter)
+    #     # print(mins)
+    #     # print(sizes)
+    #     # print("---")
+    #     model_info[i + 1] = {
+    #         "diameter": diameter,
+    #         "min_x": mins[0],
+    #         "min_y": mins[1],
+    #         "min_z": mins[2],
+    #         "size_x": sizes[0],
+    #         "size_y": sizes[1],
+    #         "size_z": sizes[2],
+    #     }
+    #     if len(symmetries_discrete) > 0:
+    #         model_info[i + 1]["symmetries_discrete"] = symmetries_discrete
+    #     if len(symmetries_continuous) > 0:
+    #         model_info[i + 1]["symmetries_continuous"] = symmetries_continuous
+    # with open("/mnt/Data/datasets/BOP19/exapc/models/models_info.json", 'w') as file:
+    #     json.dump(model_info, file)
+    #
+    # import sys
+    # sys.exit(0)
+
     # loop over scenes...
     objects = []
     scenes = list(range(1, num_scenes+1))  # all in Mitash' script -> same as in paper
@@ -232,6 +325,10 @@ if __name__ == "__main__":
     # scenes = list(range(31, 43))  # 3-obj (all in dataset)
     # scenes = list(range(1, 36))  # all with annotated dependencies
     # scenes = list(range(1, 43))  # all scenes in dataset
+    obj_ids = []
+    obj_gt_Ts = {}
+    scene_camera = {}
+
     for scene in scenes:
         # if scene < 31:  #> 30:#
         #     errors_translation += [0, 0, 0]
@@ -255,6 +352,18 @@ if __name__ == "__main__":
         scene_depth = np.array(PIL.Image.open(PATH_APC + "scene-%0.4d/debug_search/scene.png" % scene), dtype=np.uint16)  # table removed (as in Mitash)
         scene_depth = (scene_depth << 13 | scene_depth >> 3) / 10  # [mm]
 
+        # # convert to BOP format
+        # if not os.path.exists("/mnt/Data/datasets/BOP19/exapc/test/%0.6d" % scene):
+        #     os.mkdir("/mnt/Data/datasets/BOP19/exapc/test/%0.6d" % scene)
+        #     os.mkdir("/mnt/Data/datasets/BOP19/exapc/test/%0.6d/rgb" % scene)
+        #     os.mkdir("/mnt/Data/datasets/BOP19/exapc/test/%0.6d/depth" % scene)
+        #     os.mkdir("/mnt/Data/datasets/BOP19/exapc/test/%0.6d/mask" % scene)
+        #     os.mkdir("/mnt/Data/datasets/BOP19/exapc/test/%0.6d/mask_visib" % scene)
+        # PIL.Image.fromarray(rgb.astype(np.uint8)).save(
+        #     "/mnt/Data/datasets/BOP19/exapc/test/000001/rgb/%0.6d.png" % scene)
+        # PIL.Image.fromarray(depth.astype(np.uint16)).save(
+        #     "/mnt/Data/datasets/BOP19/exapc/test/000001/depth/%0.6d.png" % scene)
+
         # camera data
         camera_intrinsics = np.array(gt_info['camera']['camera_intrinsics'])
         camera_extrinsics = np.matrix(np.eye(4))
@@ -266,6 +375,14 @@ if __name__ == "__main__":
         camera_q = gt_info['camera']['camera_pose'][3:]  # wxyz
         camera_q = camera_q[1:] + [camera_q[0]]  # xyzw
         camera_extrinsics[:3, :3] = Rotation.from_quat(camera_q).as_dcm()
+
+        # # convert to BOP format
+        # scene_camera["%i" % scene] = {
+        #     "cam_K": list(camera_intrinsics.reshape(9)),
+        #     "cam_R_w2c": list(np.array(camera_extrinsics[:3, :3]).reshape(9)),
+        #     "cam_t_w2c": list(np.array(camera_extrinsics[:3, 3]).reshape(3)*1000),
+        #     "depth_scale": 1.0
+        # }
 
 
         def estimate_normals(D):
@@ -325,8 +442,8 @@ if __name__ == "__main__":
                 Verefine.REFINER = pir
 
         # get pose estimates
-        obj_ids = []
-        obj_gt_Ts = {}
+        # obj_ids = []
+        # obj_gt_Ts = {}
         hypotheses = []
         obj_depths = []
         n_obj = 0
@@ -371,7 +488,9 @@ if __name__ == "__main__":
             obj_gt_T = world_to_cam * obj_gt_T  # to camera coordinates TODO correct?
 
             obj_ids.append(obj_id)
+            # obj_gt_Ts["%i-%i" % (scene, obj_id)] = obj_gt_T  # BOP format
             obj_gt_Ts[obj_id] = obj_gt_T
+            # continue
 
             # -- hyp
             if POOL != "search":
@@ -849,8 +968,9 @@ if __name__ == "__main__":
 
                     # get best for final estimate
                     for i in range(len(tree)):
+                        # a) best object level fit
                         # hypothesis, _, _ = babs[i].get_best()  # TODO adapt to be based on reward
-                        # hypothesis = babs[i].best
+                        # b) best average scene level fit
                         hypothesis = babs[i].pool[np.argmax([babs[i].rewards])][-1]
                         final_hypotheses.append(hypothesis)
 
@@ -893,7 +1013,7 @@ if __name__ == "__main__":
             for hypothesis in final_hypotheses:
                 with open("/home/dominik/projects/hsr-grasping/log/%s/%s/super4pcs_exapc-test.csv"
                           % (EST_MODE, MODE if POOL == "clusterPose" else POOL), 'a') as file:
-                    parts = ["%0.2d" % scene, "0", "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
+                    parts = ["1", "%i" % scene, "%i" % int(hypothesis.model), "%0.3f" % hypothesis.confidence,
                              " ".join(["%0.6f" % v for v in np.array(hypothesis.transformation[:3, :3]).reshape(9)]),
                              " ".join(["%0.6f" % (v * 1000) for v in np.array(hypothesis.transformation[:3, 3])]),
                              "%0.3f" % durations[-1]]
@@ -996,6 +1116,7 @@ if __name__ == "__main__":
                 if gt_visibility > 0.1:  # TODO is this the same threshold as in Hodan?
                     errs_vsd.append(err_vsd)
                     errors_vsd.append(err_vsd)
+
         print("   mean err r = %0.1f" % np.mean(errs_r))
         print("   mean err t [cm] = %0.1f" % (np.mean(errs_t)/10))
         if ALL_COSTS:
@@ -1074,6 +1195,83 @@ if __name__ == "__main__":
         TrimmedIcp.icp_durations.clear()
         renderer.runtimes.clear()
         Verefine.cost_durations.clear()
+
+    # # convert to BOP format
+    # with open("/mnt/Data/datasets/BOP19/exapc/test/000001/scene_camera.json", 'w') as file:
+    #     json.dump(scene_camera, file)
+    #
+    # renderer.set_observation(depth.reshape(480, 640, 1), scene_normals.reshape(480, 640, 3))
+    # scene_gt = {}
+    # scene_gt_info = {}
+    # for scene in range(1, 43):
+    #
+    #     ids = [renderer.dataset.objlist.index(id) for id in obj_ids[(scene - 1) * 3:scene * 3]]
+    #     keys = ["%i-%i" % (scene, obj_id) for obj_id in obj_ids[(scene - 1) * 3:scene * 3]]
+    #
+    #     scene_depth = renderer.render(ids,
+    #                                   [obj_gt_Ts[k] for k in keys],
+    #                                   camera_extrinsics, camera_intrinsics, mode='depth')[1]
+    #     scene_gt_objs = []
+    #     scene_gt_infos = []
+    #     for oi, (obj_id, k) in enumerate(zip(obj_ids[(scene-1)*3:scene*3], keys)):
+    #         id = renderer.dataset.objlist.index(obj_id)
+    #         obj_depth = renderer.render([id], [obj_gt_Ts[k]], camera_extrinsics, camera_intrinsics, mode='depth')[1]
+    #
+    #         mask = ((obj_depth > 0) * 255).astype(np.uint8)
+    #         mask_ids = np.argwhere(mask > 0)
+    #         bbox = [np.min(mask_ids[:, 0]), np.min(mask_ids[:, 1]),
+    #                 np.max(mask_ids[:, 0]), np.max(mask_ids[:, 1])]
+    #         bbox = [bbox[1], bbox[0], bbox[3] - bbox[1], bbox[2] - bbox[0]]  # x, y, width, height
+    #         px_count_all = (mask > 0).sum()
+    #         px_count_valid = np.logical_and(mask > 0, depth > 0).sum()
+    #
+    #         PIL.Image.fromarray(mask).save(
+    #             "/mnt/Data/datasets/BOP19/exapc/test/000001/mask/%0.6d_%0.6d.png" % (scene, oi))
+    #
+    #         mask_visib = (np.logical_and(obj_depth > 0, obj_depth <= scene_depth) * 255).astype(np.uint8)
+    #         mask_visib_ids = np.argwhere(mask_visib > 0)
+    #         bbox_visib = [np.min(mask_visib_ids[:, 0]), np.min(mask_visib_ids[:, 1]),
+    #                       np.max(mask_visib_ids[:, 0]), np.max(mask_visib_ids[:, 1])]
+    #         bbox_visib = [bbox_visib[1], bbox_visib[0], bbox_visib[3]-bbox_visib[1], bbox_visib[2]-bbox_visib[0]]  # x, y, width, height
+    #         px_count_visib = (mask_visib > 0).sum()
+    #         visib_fract = px_count_visib / px_count_all
+    #
+    #         PIL.Image.fromarray(mask_visib).save(
+    #             "/mnt/Data/datasets/BOP19/exapc/test/000001/mask_visib/%0.6d_%0.6d.png" % (scene, oi))
+    #
+    #         scene_gt_obj = {
+    #             "cam_R_m2c": list(np.array(obj_gt_Ts[k][:3, :3]).reshape(9)),
+    #             "cam_t_m2c": list(np.array(obj_gt_Ts[k][:3, 3]).reshape(3)*1000),
+    #             "obj_id": obj_id
+    #         }
+    #         scene_gt_objs.append(scene_gt_obj)
+    #
+    #         scene_gt_info_obj = {
+    #             "bbox_obj": [int(v) for v in bbox],
+    #             "bbox_visib": [int(v) for v in bbox_visib],
+    #             "px_count_all": int(px_count_all),
+    #             "px_count_valid": int(px_count_valid),
+    #             "px_count_visib": int(px_count_visib),
+    #             "visib_fract": float(visib_fract)
+    #         }
+    #         scene_gt_infos.append(scene_gt_info_obj)
+    #
+    #     scene_gt[scene] = scene_gt_objs
+    #     scene_gt_info[scene] = scene_gt_infos
+    #
+    # with open("/mnt/Data/datasets/BOP19/exapc/test/000001/scene_gt.json", 'w') as file:
+    #     json.dump(scene_gt, file)
+    #
+    # with open("/mnt/Data/datasets/BOP19/exapc/test/000001/scene_gt_info.json", 'w') as file:
+    #     json.dump(scene_gt_info, file)
+    #
+    # test_targets = []
+    # for scene in range(1, 43):
+    #     test_targets += [{"im_id": scene, "inst_count": 1, "obj_id": obj_id, "scene_id": 1}
+    #                      for obj_id in obj_ids[(scene - 1) * 3:scene * 3]]
+    # with open("/mnt/Data/datasets/BOP19/exapc/test_targets_bop19.json", 'w') as file:
+    #     json.dump(test_targets, file)
+
 
     print("\n\n")
     print("total = %0.1fms" % (np.mean(durations)*1000))

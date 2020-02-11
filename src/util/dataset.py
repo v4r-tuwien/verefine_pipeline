@@ -145,12 +145,12 @@ class YcbvDataset:
         self.estimate_model = "../../data/pose_model_26_0.012863246640872631.pth"
         self.refine_model = "../../data/pose_refine_model_69_0.009449292959118935.pth"
 
-        # self.pcd = []
-        # for obj_name in list(self.obj_names.values())[:-1]:
-        #     pcd = o3d.read_point_cloud("/mnt/Data/datasets/YCB Video/YCB_Video_Dataset/models/%s/textured_simple.ply"
-        #                                  % obj_name)
-        #     pcd = o3d.voxel_down_sample(pcd, 0.001)
-        #     self.pcd.append(np.hstack((np.asarray(pcd.points), np.asarray(pcd.normals))))
+        self.pcd = []
+        for obj_name in list(self.obj_names.values())[:-1]:
+            pcd = o3d.read_point_cloud("/mnt/Data/datasets/YCB Video/YCB_Video_Dataset/models/%s/points.xyz"
+                                         % obj_name)
+            pcd = o3d.voxel_down_sample(pcd, 0.001)
+            self.pcd.append(np.asarray(pcd.points))#np.hstack((np.asarray(pcd.points), np.asarray(pcd.normals))))
 
 
 

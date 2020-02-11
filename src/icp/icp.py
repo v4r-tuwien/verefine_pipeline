@@ -26,7 +26,7 @@ class Icp(Refiner):
     def __init__(self, renderer, intrinsics, dataset, mode="bab"):
         Refiner.__init__(self, intrinsics, dataset, mode=mode)
         self.renderer = renderer
-        self.num_samples = 1e4
+        self.num_samples = 1e3
 
     def getXYZ(self, depth, fx, fy, cx, cy, bbox=np.array([0])):
         # get x,y,z coordinate in mm dimension
@@ -117,7 +117,7 @@ class Icp(Refiner):
         else:
             return np.zeros((4), np.int)
 
-    def refine(self, rgb, depth, intrinsics, roi, mask, obj_id,
+    def refine(self, rgb, depth, intrinsics, roi, union_mask, obj_id,
                estimate, iterations, cloud_obs=None, cloud_ren=None,
                explained=None):
         Icp.ref_count += 1
@@ -130,36 +130,35 @@ class Icp(Refiner):
         # pts_tgt = np.dot(self.dataset.pcd[obj_id - 1], obj_T[:3, :3].T) + obj_T[:3, 3].T
 
         obj_id = self.renderer.dataset.objlist.index(obj_id)
-        depth_init = self.renderer.render([obj_id], [obj_T],
-                                   np.matrix(np.eye(4)), intrinsics,
-                                   mode='depth')[1]
-        depth = depth.copy() / 1000
+        depth_t = depth.copy() / 1000
         camK = intrinsics
         rot_pred = obj_T[:3, :3]
         tra_pred = obj_T[:3, 3]*1000
 
 
-
-        depth_t = np.nan_to_num(depth)
-        depth_valid = np.logical_and(depth_t > 0.2, depth_t < 3)
-
         st_conversion = time.time()
+        depth_t = np.nan_to_num(depth_t)
         points_tgt = np.zeros((depth_t.shape[0], depth_t.shape[1], 6), np.float32)
         points_tgt[:, :, :3] = self.getXYZ(depth_t, fx=camK[0, 0], fy=camK[1, 1], cx=camK[0, 2],
                                       cy=camK[1, 2])
         points_tgt[:, :, 3:] = self.get_normal(depth_t, fx=camK[0, 0], fy=camK[1, 1], cx=camK[0, 2],
                                           cy=camK[1, 2], refine=True)
-        print("conv obs %0.3f" % (time.time() - st_conversion))
-
-        mask_pred = depth_init>0  # TODO output of P2P
-        union_mask = np.logical_or(mask, mask_pred)
-        union_mask = np.logical_and(union_mask, depth_valid)
         pts_tgt = points_tgt[union_mask]
+        if pts_tgt.shape[0] == 0:
+            print("no valid depth values")
+            return estimate
+        # print("conv obs %0.3f" % (time.time() - st_conversion))
+
 
         centroid_tgt = np.array([np.mean(pts_tgt[:, 0]), np.mean(pts_tgt[:, 1]), np.mean(pts_tgt[:, 2])])
         if (tra_pred[2] < 300 or tra_pred[2] > 5000):
             # when estimated translation is weired, set centroid of tgt points as translation
             tra_pred = centroid_tgt * 1000
+
+        obj_T[:3, 3] = tra_pred.reshape(3, 1)/1000
+        depth_init = self.renderer.render([obj_id], [obj_T],
+                                   np.matrix(np.eye(4)), intrinsics,
+                                   mode='depth')[1]
 
         init_mask = depth_init > 0
         bbox_init = self.get_bbox_from_mask(init_mask > 0)
@@ -175,7 +174,7 @@ class Icp(Refiner):
                                       bbox_init)
         points_src[:, :, 3:] = self.get_normal(depth_init, fx=camK[0, 0], fy=camK[1, 1], cx=camK[0, 2],
                                           cy=camK[1, 2], refine=True, bbox=bbox_init)
-        print("conv est %0.3f" % (time.time() - st_conversion))
+        # print("conv est %0.3f" % (time.time() - st_conversion))
         points_src = points_src[init_mask[bbox_init[0]:bbox_init[2], bbox_init[1]:bbox_init[3]] > 0]
         centroid_src = np.array([np.mean(points_src[:, 0]), np.mean(points_src[:, 1]), np.mean(points_src[:, 2])])
 
@@ -184,15 +183,16 @@ class Icp(Refiner):
         points_src[:, :3] += trans_adjust
 
         st_icp = time.time()
-        icp_fnc = cv2.ppf_match_3d_ICP(10*iterations, tolerence=0.05, numLevels=5)  # 1cm
+        icp_fnc = cv2.ppf_match_3d_ICP(100*iterations, tolerence=0.05, numLevels=5)  # 1cm
         # print(points_src.shape)
         # print(pts_tgt.shape)
-        points_src = points_src[np.random.choice(list(range(points_src.shape[0])),
-                                                 int(min(points_src.shape[0], self.num_samples))), :]
-        pts_tgt = pts_tgt[np.random.choice(list(range(pts_tgt.shape[0])),
-                                           int(min(points_src.shape[0], self.num_samples))), :]
+        if self.num_samples > 0:
+            points_src = points_src[np.random.choice(list(range(points_src.shape[0])),
+                                                     int(min(points_src.shape[0], self.num_samples))), :]
+            pts_tgt = pts_tgt[np.random.choice(list(range(pts_tgt.shape[0])),
+                                               int(min(points_src.shape[0], self.num_samples))), :]
         retval, residual, pose = icp_fnc.registerModelToScene(points_src.reshape(-1, 6), pts_tgt.reshape(-1, 6))
-        print("icp %0.3f" % (time.time() - st_icp))
+        # print("icp %0.3f" % (time.time() - st_icp))
 
         tf = np.eye(4)
         tf[:3, :3] = rot_pred
@@ -201,7 +201,7 @@ class Icp(Refiner):
 
         Icp.icp_durations.append(time.time()-st)
 
-        # c = residual  # TODO update c?
+        # c = mask_score/(residual+0.00001)  # TODO update c?
         return Rotation.from_dcm(tf[:3, :3]).as_quat(), tf[:3, 3], c
 
 
