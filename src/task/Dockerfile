@@ -12,7 +12,6 @@ MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip python-tk
-# TODO install TF
 
 # for opengl/rendering
 RUN apt-get install -y libsm6 libglib2.0-0 libgl1-mesa-glx libpcl-dev libglfw3-dev libgles2-mesa-dev \
@@ -44,8 +43,9 @@ ENV ROS_DISTRO kinetic
 RUN apt-get install -y \
   ros-kinetic-ros-base=1.3.2-0*
 
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
      python-catkin-tools \
+     ros-kinetic-tf \
      && rm -rf /var/lib/apt/lists/*
 
 # ----------------

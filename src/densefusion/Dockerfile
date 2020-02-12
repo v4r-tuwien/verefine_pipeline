@@ -77,12 +77,14 @@ ENV PYTHONPATH=/densefusion:/densefusion/src:$PYTHONPATH
 
 # copy data
 COPY ./data /densefusion/data/
-RUN mkdir /densefusion
-RUN mkdir /densefusion/data
+# RUN mkdir /densefusion
+# RUN mkdir /densefusion/data
+RUN mkdir /verefine
 RUN unzip /densefusion/data/models.zip -d /verefine/data
 
 # entry point
-COPY ./src/densefusion/ros_entrypoint.sh /
-RUN chmod +x /ros_entrypoint.sh
-ENTRYPOINT ["/ros_entrypoint.sh"]
+WORKDIR /densefusion
+COPY ./src/densefusion/ros_pose.sh /ros_pose.sh
+RUN chmod +x /ros_pose.sh
+ENTRYPOINT ["/ros_pose.sh"]
 CMD ["bash"]

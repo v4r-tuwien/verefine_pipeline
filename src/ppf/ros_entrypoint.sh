@@ -3,5 +3,4 @@ set -e
 
 # setup ros environment
 source "/opt/ros/$ROS_DISTRO/setup.bash"
-#source "/home/v4r/catkin_ws/devel/setup.bash"
 exec "$@"

@@ -30,7 +30,7 @@ if __name__ == "__main__":
     intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
                            0.0, 538.085452058436, 233.0483557773859,
                            0.0, 0.0, 1.0]).reshape(3, 3)
-    densefusion = DenseFusion(640, 480, intrinsics, dataset, mode="base")  # TODO set mode via parameter
+    densefusion = DenseFusion(640, 480, intrinsics, dataset, mode="bab")  # TODO set mode via parameter
 
     rospy.init_node("poserefinement_densefusion")
     s = rospy.Service("refine_pose", refine_poses, densefusion.ros_refine)

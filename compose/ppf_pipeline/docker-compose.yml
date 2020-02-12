@@ -1,0 +1,76 @@
+version: '2.4'
+services:
+
+  detect:
+    image: "maskrcnn"
+    network_mode: "host"
+    runtime: "nvidia"
+    # user: root
+
+    # extra_hosts:
+    #   - "hsrb:10.0.0.143"
+
+    environment:
+      # ROS_MASTER_URI:     # empty value means use same as host
+      ROS_MASTER_URI: "http://hsrb:11311"
+
+    command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
+
+  estimate:
+    image: "ppf_recognizer"
+    network_mode: "host"
+    volumes:
+      - ../../data/ycbv_ppf_models:/home/v4r/models
+    environment:
+      ROS_MASTER_URI: "http://hsrb:11311"
+
+    # adds hostnames to the containers /etc/hosts
+    # extra_hosts:
+    #   - "hsrb:10.0.0.143"
+
+    command: bash -c "source /home/v4r/catkin_ws/devel/setup.bash; roslaunch ppf_recognizer_ros hsr_ppf_pipeline.launch"
+
+    stdin_open: true
+    tty: true
+
+  # refine:
+  #   image: "icp"
+  #   network_mode: "host"
+  #   environment:
+  #     ROS_MASTER_URI:
+
+  #   command: bash -c "ROS_NAMESPACE=hsr_grasping python /path/to/icp/refine/.py"
+
+  #   stdin_open: true
+  #   tty: true
+
+  refine:
+    image: "densefusion"
+    network_mode: "host"
+    runtime: "nvidia"
+    volumes:
+      - ../../:/hsr-grasping
+    environment:
+      ROS_MASTER_URI: "http://hsrb:11311"
+      # DISPLAY:
+      # QT_X11_NO_MITSHM: 1
+    
+    entrypoint: ""
+    command: bash -c "source /densefusion/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_refinement.py"
+
+    stdin_open: true
+    tty: true
+
+  grasp:
+    image: "hsr-grasping"
+    network_mode: "host"
+    runtime: "nvidia"
+    environment:
+      ROS_MASTER_URI: "http://hsrb:11311"
+      # DISPLAY:
+      # QT_X11_NO_MITSHM: 1
+
+    command: bash -c "source /task/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /task/src/task/ros_grasp_object.py"
+
+    stdin_open: true
+    tty: true
