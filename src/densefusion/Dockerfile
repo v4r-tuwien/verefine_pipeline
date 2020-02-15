@@ -22,6 +22,18 @@ RUN apt-get update \
 RUN apt-get update && apt-get install -y libsm6 libglib2.0-0 libgl1-mesa-glx libpcl-dev libglfw3-dev libgles2-mesa-dev \
     libgtk2.0-dev
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        xz-utils \
+        xorg-dev \
+        libgl1-mesa-dev \
+        libglu1-mesa-dev \
+        libxrandr-dev \
+        libxinerama-dev \
+        libxcursor-dev \
+        libxi-dev \
+        libxxf86vm-dev
+
 # create a catkin workspace
 WORKDIR /densefusion
 RUN mkdir -p /densefusion/catkin_ws/src

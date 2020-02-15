@@ -4,6 +4,15 @@ import ros_numpy
 import actionlib
 import tf
 
+import os
+import PIL
+from PIL import Image as PImage
+import json
+import gc
+
+import time
+from datetime import datetime
+
 import cv2
 import scipy.spatial.transform as scit
 
@@ -69,7 +78,7 @@ class Grasper:
 
         self.pub_segmentation = rospy.Publisher("/hsr_grasping/segmentation", Image)
         # self.pub_initial = rospy.Publisher("/hsr_grasping/initial_poses", Image)
-        # self.pub_refined = rospy.Publisher("/hsr_grasping/refined_poses", Image)
+        self.pub_refined = rospy.Publisher("/hsr_grasping/refined_poses", Image)
         self.pub_poses = tf.TransformBroadcaster()
         self.current_poses = []
 
@@ -94,14 +103,25 @@ class Grasper:
         # === run pipeline ===
 
         self.working = True
+        gc.collect()
 
         self.renderer.create_egl_context()  # TODO needed?
 
         self.current_poses = []
 
+        with open("/task/src/config.json", 'r') as file:
+            config = json.load(file)
+        th_detection = config["filter"]["detection_min_score"]
+        th_estimation = config["filter"]["estimation_min_score"]
+        th_refinement = config["filter"]["refinement_min_score"]
+        print("settings:\n   thresholds: detection=%0.3f, estimation=%0.3f, refinement=%0.3f"
+            % (th_detection, th_estimation, th_refinement))
+
         # detect all instances in image
         print("requesting detection...")
+        st = time.time()
         detections = detect(self.rgb)
+        duration_detection = time.time() - st
         print("   received detection.")
         if detections is None or len(detections) == 0:
             print("nothing detected")
@@ -112,16 +132,22 @@ class Grasper:
         # for each instance...
         poses = []
         confidences = []
+        durations = []
         for detection in detections:
             # reject based on detection score
-            if detection.score < 0.1:
+            if detection.score < th_detection:
                 print("detection of %s rejected" % detection.name)
                 continue
 
             # estimate a set of candidate poses
             print("requesting pose estimate...")
+            st = time.time()
             instance_poses = estimate(self.rgb, self.depth, detection)
             print("   received pose.")
+            instance_poses = [pose for pose in instance_poses if pose.confidence > th_estimation]
+            if len(instance_poses) == 0:
+                print("all poses for %s rejected after estimation" % detection.name)
+                continue
             # assert len(instance_poses) == 5  # TODO
             # for instance_pose in instance_poses:
             #   self.vis_pose(instance_poses, "_estimated")
@@ -129,23 +155,70 @@ class Grasper:
             # refine candidate poses
             print("requesting pose refinement...")
             instance_poses = refine(self.rgb, self.depth, detection, instance_poses)
+            duration = time.time() - st
             print("   received refined poses.")
             if len(instance_poses) == 0:
-                print("all poses for %s rejected by refinement" % detection.name)
+                print("all poses for %s rejected after refinement" % detection.name)
                 continue
             # for instance_pose in instance_poses:
             #   self.vis_pose(instance_poses, "_refined")
 
-            # reject by pose confidence
+            # # reject by pose confidence
             print(",".join(["%0.3f" % pose.confidence for pose in instance_poses]))
-            instance_poses = [pose for pose in instance_poses if pose.confidence > 0.01]
+            instance_poses = [pose for pose in instance_poses if pose.confidence > th_refinement]
             # add to set of poses of detected instances
             if len(instance_poses) > 0:
                 poses += instance_poses
                 confidences += [pose.confidence for pose in instance_poses]
+                durations += [duration] * len(instance_poses)
             else:
                 print("all poses of %s rejected" % detection.name)
         assert len(poses) == len(confidences)
+
+        # === to numpy and store
+        if not os.path.exists("/task/lm"):
+            os.mkdir("/task/lm")
+        filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        PImage.fromarray(ros_numpy.numpify(self.rgb)).save("/task/lm/%s_rgb.png" % (filename))
+        PImage.fromarray(ros_numpy.numpify(self.depth)).save("/task/lm/%s_depth.png" % (filename))
+
+        for ii, detection in enumerate(detections):
+            name = detection.name
+            obj_id = -1
+            for idx, obj_name in self.dataset.obj_names.items():
+                if obj_name == name:
+                    obj_id = idx + 1
+                    break
+            assert obj_id > 0  # should start from 1
+
+            mask_ids = detection.mask
+            mask_ids = np.array(mask_ids)
+            width, height = self.rgb.width, self.rgb.height
+            obj_mask = np.zeros((height * width), dtype=np.uint8)
+            obj_mask[mask_ids] = 255
+            obj_mask = obj_mask.reshape((height, width))
+
+            PImage.fromarray(obj_mask).save("/task/lm/%s-%i_mask.png" % (filename, ii))
+
+        for pose, duration in zip(poses, durations):
+            pose_estimate = [
+                ros_numpy.numpify(pose.pose.orientation),
+                ros_numpy.numpify(pose.pose.position),
+                pose.confidence
+            ]
+
+            from scipy.spatial.transform import Rotation
+            T_obj = np.matrix(np.eye(4))
+            T_obj[:3, :3] = Rotation.from_quat(pose_estimate[0]).as_dcm()
+            T_obj[:3, 3] = pose_estimate[1].reshape(3, 1)
+
+            with open("/task/lm/%s.csv" % filename, 'a') as file:
+                parts = [str(pose.name),
+                                    "%0.3f" % pose_estimate[2],
+                                    " ".join(["%0.6f" % v for v in np.array(T_obj[:3, :3]).reshape(9)]),
+                                    " ".join(["%0.6f" % (v * 1000) for v in np.array(T_obj[:3, 3])]),
+                                    "%0.3f" % (duration + duration_detection)]
+                file.write(",".join(parts) + "\n")
 
         # === select pose with highest confidence === TODO and scale by distance?
 
@@ -242,14 +315,14 @@ class Grasper:
             obj_mask[mask_ids] = 1
             obj_mask = obj_mask.reshape((height, width))
 
-            vis_segmentation[obj_mask, 0] = 255
-            vis_segmentation[obj_mask, 1] = 0
-            vis_segmentation[obj_mask, 2] = 255
+            vis_segmentation[obj_mask > 0, 0] = 255
+            vis_segmentation[obj_mask > 0, 1] = 0
+            vis_segmentation[obj_mask > 0, 2] = 255
 
             cv2.rectangle(vis_segmentation, (obj_roi[1], obj_roi[0]), (obj_roi[3], obj_roi[2]), (255, 0, 255), 2)
             cv2.putText(vis_segmentation, name, (obj_roi[1], obj_roi[0]), cv2.FONT_HERSHEY_SIMPLEX, 1,
                         (255, 255, 255), 2, 1)
-        vis_segmentation = np.uint8((rgb / 255 * 0.5 + vis_segmentation / 255 * 0.5) * 255)
+        vis_segmentation = np.uint8((np.float32(rgb) / 255 * 0.5 + np.float32(vis_segmentation) / 255 * 0.5) * 255)
 
         ros_vis_segmentation = ros_numpy.msgify(Image, vis_segmentation, encoding="rgb8")
         self.pub_segmentation.publish(ros_vis_segmentation)
@@ -311,7 +384,7 @@ class Grasper:
         # TODO visualize detected plane
 
         ros_vis_initial = ros_numpy.msgify(Image, vis_pose, encoding="rgb8")
-        self.pub_segmentation.publish(ros_vis_initial)
+        self.pub_refined.publish(ros_vis_initial)
 
     def tf_pose(self, pose, suffix):
         self.pub_poses.sendTransform([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z], [pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z, pose.pose.orientation.w], rospy.Time.now(), pose.name + suffix,

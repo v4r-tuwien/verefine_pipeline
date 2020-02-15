@@ -9,9 +9,9 @@
 import OpenGL
 OpenGL.ERROR_CHECKING = True
 
-# import os
-# os.environ['PYOPENGL_PLATFORM'] = "egl"
-# import OpenGL.EGL as egl
+import os
+os.environ['PYOPENGL_PLATFORM'] = "egl"
+import OpenGL.EGL as egl
 
 import ctypes
 from ctypes import pointer
@@ -20,8 +20,8 @@ import OpenGL.GL as gl
 
 
 import numpy as np
-from glumpy import gloo, app
-app.use('glfw')
+from glumpy import gloo#, app
+#app.use('glfw')
 import time
 
 # Set logging level
@@ -350,6 +350,14 @@ class Renderer:
         self.width, self.height = width, height
         self.near, self.far = near, far
 
+        # egl related
+        self.eglDpy, self.eglCfg, self.eglSurf, self.eglCtx = None, None, None, None
+        self.setup_egl()
+        self.create_egl_context()
+
+        # Shader
+        self.activate_egl_context()
+
         # Create window
         # config = app.configuration.Configuration()
         # # Number of samples used around the current pixel for multisample
@@ -359,7 +367,7 @@ class Renderer:
         # config.major_version = 3
         # config.minor_version = 3
         # self.window = app.Window(640, 480, config=config, visible=False)
-        self.window = app.Window(640, 480, visible=False)
+        #self.window = app.Window(640, 480, visible=False)
 
         # Frame buffer object
         self.color_depth_buf = np.zeros((480, 640, 4), np.float32).view(gloo.TextureFloat2D)
@@ -391,15 +399,8 @@ class Renderer:
         for model in self.models:
             model.vertex_buffer = self.vertex_buffer
 
-        # egl related
-        # self.eglDpy, self.eglCfg, self.eglSurf, self.eglCtx = None, None, None, None
-        # self.setup_egl()
-        # self.create_egl_context()
-
         # Shader
-        # self.activate_egl_context()
         self.program = gloo.Program(_vertex_code, _fragment_code)
-        # self.deactivate_egl_context()
 
         self.program['u_texture'] = np.zeros((512, 512, 3), np.float32)
         self.program.bind(self.vertex_buffer)  # is bound once -- saves some time
@@ -413,6 +414,8 @@ class Renderer:
 
         self.observation = None
         self.runtimes = []
+
+        self.deactivate_egl_context()
 
     def setup_egl(self):
         # initialize EGL
@@ -528,11 +531,11 @@ class Renderer:
     def _draw(self, model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id):
 
         assert mode in ['color', 'depth', 'depth+seg', 'depth+normal', 'cost', 'cost_multi']
-
+        #print("=== draw...")
+        self.activate_egl_context()
         self.fbo.activate()
 
-        # self.activate_egl_context()
-
+        #print("=== settings per mode")
         if mode == 'depth':
             dims = 1
             format = gl.GL_RED
@@ -552,7 +555,7 @@ class Renderer:
 
 
         # self.program['u_observation'] = self.observation
-
+        #print("=== gl settings")
         gl.glClearColor(0.0, 0.0, 0.0, 0.0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
@@ -560,15 +563,16 @@ class Renderer:
         gl.glDisable(gl.GL_CULL_FACE)  # some models (e.g. lamp in Linemod) are one-sided; disable culling to fix render
 
         # Rendering
+        #print("=== render %i models" % len(model_ids))
         st = time.time()
         for i, (model_id, mat_model) in enumerate(zip(model_ids, model_trafos)):
             model = self.models[model_id]
-
+            #print("=== set program variables")
             self.program['u_mv'] = self._compute_model_view(mat_model, mat_view)
             self.program['u_mvp'] = self._compute_model_view_proj(mat_model, mat_view, mat_proj)
             self.program['u_norm'] = self._compute_model_view(mat_model, mat_view)
             self.program['u_obj_id'] = model_id
-
+            #print("=== draw call")
             try:
                 model.draw(self.program, use_texture=(mode == 'color'))
                 # print("SUCCESS")
@@ -576,7 +580,7 @@ class Renderer:
                 print("failed to draw")
                 pass
         elapsed_draw = time.time() - st
-
+        #print("=== read-back")
         # Retrieve the contents of the FBO texture
         st = time.time()
         buffer = np.zeros((self.height, self.width, dims), dtype=np.float32)
@@ -661,7 +665,7 @@ class Renderer:
 
         self.runtimes.append([elapsed_draw, elapsed_read, elapsed_cost])
 
-        # self.deactivate_egl_context()
+        self.deactivate_egl_context()
 
         if mode in ["cost", 'cost_multi']:
             return buffer, fit
@@ -740,6 +744,7 @@ class Renderer:
     def render(self, model_ids, model_trafos, extrinsics, intrinsics, mode='depth+seg',
                perspective=True, top=False, bbox=None, cost_id=None):
 
+        #print("=== fast render ===")
         t_start = time.time()
 
         # model trafo given in camera coordinates -> to world, transpose to be row major
@@ -763,7 +768,7 @@ class Renderer:
         #     self.window.clear()
 
             # TODO is it much faster to have a single draw and multiple read-backs for e.g. color+depth+seg?
-
+        #print("=== call draw")
         rgb, depth, seg = None, None, None
         if mode == 'depth' or (mode in ['cost', 'cost_multi'] and cost_id is None):  # depth-only
             buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
@@ -779,6 +784,7 @@ class Renderer:
                 depth = buffer[:, :, 0]#.astype(np.float32)
                 seg = buffer[:, :, 1].astype(np.uint8)
             if 'depth+normal' in mode:
+                #print("=== depth + normal")
                 buffer = self._draw(model_ids, model_trafos, mat_view, mat_proj, mode, bbox, cost_id)
                 # t_start = time.time()
                 normal = buffer[:, :, :3]#.astype(np.float32)

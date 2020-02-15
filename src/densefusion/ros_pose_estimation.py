@@ -20,6 +20,7 @@ import rospy
 from geometry_msgs.msg import Pose, Point, Quaternion
 from object_detector_msgs.msg import BoundingBox, Detection, PoseWithConfidence
 from object_detector_msgs.srv import estimate_poses, estimate_posesResponse
+from object_detector_msgs.srv import refine_poses, refine_posesResponse
 import ros_numpy
 
 from src.util.dataset import YcbvDataset
@@ -32,7 +33,7 @@ if __name__ == "__main__":
     intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
                            0.0, 538.085452058436, 233.0483557773859,
                            0.0, 0.0, 1.0]).reshape(3, 3)
-    densefusion = DenseFusion(640, 480, intrinsics, dataset, only_estimator=True)
+    densefusion = DenseFusion(640, 480, intrinsics, dataset)#, only_estimator=True)
 
     def estimate(req):
         print("pose estimate requested...")
@@ -66,8 +67,14 @@ if __name__ == "__main__":
         obj_mask = obj_mask.reshape((height, width))
 
         # === POSE ESTIMATION ===
-        hypotheses_per_instance = 5
-        hypotheses = densefusion.estimate(rgb, depth, intrinsics, obj_roi, obj_mask, obj_id,
+        import json
+        import os
+        #print(os.path.exists("/densefusion/src/config.json"))
+        with open("/densefusion/src/config.json", 'r') as file:
+            config = json.load(file)
+        hypotheses_per_instance = config["estimation"]["num_hypotheses"]
+        print("   run estimation: num_hypotheses=%i..." % hypotheses_per_instance)
+        hypotheses, _, _ = densefusion.estimate(rgb, depth, intrinsics, obj_roi, obj_mask, obj_id,
                                           hypotheses_per_instance=hypotheses_per_instance)
         assert len(hypotheses) == hypotheses_per_instance
 
@@ -92,10 +99,15 @@ if __name__ == "__main__":
 
         response = estimate_posesResponse()
         response.poses = poses
+        print("   pose estimate sent.")
         return response
 
     rospy.init_node("poseestimation_densefusion")
-    s = rospy.Service("estimate_pose", estimate_poses, estimate)
+    s = rospy.Service("estimate_poses", estimate_poses, estimate)
     print("PoseEstimation with DenseFusion ready.")
+
+    #rospy.init_node("poserefinement_densefusion")
+    s2 = rospy.Service("refine_pose", refine_poses, densefusion.ros_refine)
+    print("PoseRefinement with DenseFusion ready.")
 
     rospy.spin()

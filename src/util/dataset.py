@@ -113,7 +113,7 @@ class YcbvDataset:
         ]
         self.obj_coms = [com * 0.5 for com in self.obj_coms]
 
-        self.base_path = base_path  # TODO dependent on BOP, not YCBV
+        self.base_path = "/verefine/data/"   # TODO dependent on BOP, not YCBV
         self.model_paths = sorted(glob.glob(
             self.base_path + "/models/*/textured_simple.obj"))  # -> obj_01 will have id 1 in segmentation mask
         self.mesh_scale = [1.0] * 3
@@ -142,15 +142,15 @@ class YcbvDataset:
         ]
 
         self.num_points = 1000
-        self.estimate_model = "../../data/pose_model_26_0.012863246640872631.pth"
-        self.refine_model = "../../data/pose_refine_model_69_0.009449292959118935.pth"
+        self.estimate_model = "/densefusion/data/pose_model_26_0.012863246640872631.pth"
+        self.refine_model = "/densefusion/data/pose_refine_model_69_0.009449292959118935.pth"
 
         self.pcd = []
-        for obj_name in list(self.obj_names.values())[:-1]:
-            pcd = o3d.read_point_cloud("/mnt/Data/datasets/YCB Video/YCB_Video_Dataset/models/%s/points.xyz"
-                                         % obj_name)
-            pcd = o3d.voxel_down_sample(pcd, 0.001)
-            self.pcd.append(np.asarray(pcd.points))#np.hstack((np.asarray(pcd.points), np.asarray(pcd.normals))))
+        #for obj_name in list(self.obj_names.values())[:-1]:
+        #    pcd = o3d.read_point_cloud("/mnt/Data/datasets/YCB Video/YCB_Video_Dataset/models/%s/points.xyz"
+        #                                 % obj_name)
+        #    pcd = o3d.voxel_down_sample(pcd, 0.001)
+        #    self.pcd.append(np.asarray(pcd.points))#np.hstack((np.asarray(pcd.points), np.asarray(pcd.normals))))
 
 
 
@@ -237,7 +237,7 @@ class LmDataset:
         self.refine_model = '../../data/pose_refine_model_493_0.006761023565178073.pth'
 
 
-import open3d as o3d
+#import open3d as o3d
 import numpy as np
 
 
@@ -278,7 +278,7 @@ class ExApcDataset:
         self.obj_scales = [[1.0, 1.0, 1.0]] * 11  # TODO
 
         self.pcd = []
-        for obj_name in list(self.obj_names.values())[:-1]:
-            pcd = o3d.read_point_cloud("/home/dominik/experiments/PhysimGlobalPose/src/original_models/pcl/%s.pcd" % obj_name)
-            self.pcd.append(np.array(pcd.points))
+        #for obj_name in list(self.obj_names.values())[:-1]:
+        #    pcd = o3d.read_point_cloud("/home/dominik/experiments/PhysimGlobalPose/src/original_models/pcl/%s.pcd" % obj_name)
+        #    self.pcd.append(np.array(pcd.points))
 

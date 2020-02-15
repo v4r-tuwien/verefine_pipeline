@@ -35,7 +35,7 @@ class MaskRcnnDetector:
             self.config.DETECTION_NMS_THRESHOLD = 0.5
 
             self.detection_model = modellib.MaskRCNN(mode="inference", config=self.config, model_dir="/")
-            self.detection_model.load_weights("../../data/mask_rcnn_ycbv_0005.h5", by_name=True)  # TODO load
+            self.detection_model.load_weights("/maskrcnn/data/mask_rcnn_ycbv_0005.h5", by_name=True)  # TODO load
 
             self.detection_labels = list(range(1, 22))  # TODO load
 

@@ -2,13 +2,14 @@
 # Vision for Robotics Group, Automation and Control Institute (ACIN)
 # TU Wien, Vienna
 
-import matplotlib
-matplotlib.use("Qt5Agg")
-import matplotlib.pyplot as plt
-from drawnow import drawnow
+#import matplotlib
+#matplotlib.use("Qt5Agg")
+#import matplotlib.pyplot as plt
+#from drawnow import drawnow
 
 import numpy as np
 from scipy.spatial.transform.rotation import Rotation
+import time
 
 # make reproducible (works up to BAB -- TODO VF smh not)
 # seed = 0
@@ -30,10 +31,10 @@ TRACK_CONVERGENCE = False  # get best hypotheses at each iteration of SV (1 iter
 C = 1  # TODO was 1e-1
 
 ALL_OBJECTS = True
-HYPOTHESES_PER_OBJECT = 25
-ITERATIONS = 1
+HYPOTHESES_PER_OBJECT = 5
+ITERATIONS = 2
 REFINEMENTS_PER_ITERATION = 1
-SIM_STEPS = 60  # 60 as in Mitash, 3 as in paper (~10*5ms)
+SIM_STEPS = 3  # 60 as in Mitash, 3 as in paper (~10*5ms)
 
 BUDGET_SCALE = 1 if not ALL_OBJECTS else 3  # scales max iterations of verification (1... nobject * max iter per object -> one wrong node and we cannot refine all)
 REFINE_AT_ONCE = True  # during SV, spend budget one-by-one (False) or all at once (True)
@@ -161,12 +162,14 @@ def fit(observation, rendered, unexplained):
     return fit
 
 def fit_single(observation, rendered, unexplained):
+    #print("=== fit single ===")
     st = time.time()
     depth_obs = observation['depth'].copy()
     depth_ren = rendered[1] * 1000  # in mm TODO or do this in renderer?
     norm_obs = observation['normals']
     norm_ren = rendered[3]
 
+    #print("=== compute mask")
     mask = np.logical_or(depth_ren>0, depth_obs>0)  # TODO if depth_obs is already masked
     # mask = np.logical_and(depth_ren>0, depth_obs>0)
     # if unexplained is not None:
@@ -182,6 +185,7 @@ def fit_single(observation, rendered, unexplained):
     # visibility = float((vis_mask>0).sum()) / float((depth_ren>0).sum()) if np.count_nonzero(mask) > 0 else 0
     # mask = vis_mask
 
+    #print("=== check zero")
     if np.count_nonzero(mask) == 0 or (depth_ren > 0).sum() == 0:  # no valid depth values
         cost_durations.append(time.time() - st)
         return 0
@@ -192,16 +196,18 @@ def fit_single(observation, rendered, unexplained):
     # overlap = 1 - float(np.logical_and(vis_mask, depth_obs > 0).sum()) / float(vis_mask.sum())
 
     # unsupported
-    unsupported = float(np.logical_and(depth_ren > 0, depth_obs == 0).sum()) / float((depth_ren>0).sum())
+    #unsupported = float(np.logical_and(depth_ren > 0, depth_obs == 0).sum()) / float((depth_ren>0).sum())
 
     # TODO debug - perfect fit
     # depth_ren[depth_ren>0] = depth_obs[depth_ren>0]
     # norm_ren[depth_ren>0] = norm_obs[depth_ren>0]
 
+    #print("=== compute delta")
     # delta fit
     dist = np.abs(depth_obs[mask] - depth_ren[mask])
     delta = np.mean(np.min(np.vstack((dist / TAU, np.ones(dist.shape[0]))), axis=0))
 
+    #print("=== compute cos")
     # cos fit
     # norm_ren = np.dstack([norm_ren[:,:,0], norm_ren[:,:,2], norm_ren[:,:,1]])
     # # plt.imshow((norm_ren+1)/2)
@@ -227,7 +233,7 @@ def fit_single(observation, rendered, unexplained):
     # if "label" in observation:
     #     overlap = np.logical_and(depth_ren>0, observation["label"] > 0).sum() / (depth_ren>0).sum()
     #     fit = fit * 0.7 + overlap * 0.3
-
+    #print("=== return fit")
     if np.isnan(fit):  # invisible object
         cost_durations.append(time.time() - st)
         return 0
@@ -350,7 +356,7 @@ class Hypothesis:
         transformations = [self.transformation] + [other[0].transformation for other in fixed]
         rendered = RENDERER.render(obj_ids, transformations,
                                    observation['extrinsics'], observation['intrinsics'],
-                                   mode=mode, cost_id=None)#(1 << obj_id))  # if mode is cost, only compute cost for this hypothesis
+                                   mode=mode)#(1 << obj_id))  # if mode is cost, only compute cost for this hypothesis
 
         return rendered
 
@@ -365,15 +371,18 @@ class Hypothesis:
         # if fit_fn == fit_multi:# or HYPOTHESES_PER_OBJECT == 25:  # TODO also transfer to GPU
         # # # if HYPOTHESES_PER_OBJECT == 25:
         # #     # a) render depth, compute score on CPU
-        # rendered = self.render(observation, mode='depth+normal')
+        #print("-- cost single --" if fit_fn == fit_single else "-- cost multi --")
+        #print("-- on CPU")
+        #rendered = self.render(observation, mode='depth+normal')
         # #     # rendered[0] = self.render(observation, mode='color')[0]
         # #     # unexplained = np.ones_like(self.mask)# TODO self.mask
         # #     # for hs in fixed:
         # #     #     h_mask = hs[0].render(observation, mode='depth+seg')[2]
         # #     #     unexplained[h_mask > 0] = 0
-        # score = fit_fn(observation, rendered, unexplained)
+        #score = fit_fn(observation, rendered, unexplained)
         # # else:  # fit_fn == fit_single
         # _, score = self.render(observation, mode='cost')
+        #print("-- on GPU")
         _, score = self.render(observation, mode=('cost' if fit_fn == fit_single else 'cost_multi'))
         # print(np.abs(score-gpu_score))
 
@@ -543,6 +552,7 @@ class BudgetAllocationBandit:
         self.pir = pir
         self.observation = observation
 
+        #print("         - prepare pool")
         self.pool = [[h] for h in hypotheses]# + [None] * len(hypotheses)]  # for the phys hypotheses
         if not isinstance(self.pool[0], list):
             self.pool = [self.pool]
@@ -580,10 +590,13 @@ class BudgetAllocationBandit:
         self.arms = len(hypotheses)
         self.fits = np.zeros((self.arms, self.max_iter))#TODO was self.max_iter + 1))
         # self.pir.fixed = fixed
+        #print("         - compute initial fit for %i hypotheses" % len(hypotheses))
         for hi, h in enumerate(hypotheses):
+            #print("         a) original")
             stability = 0.0#self.pir.simulate(h) * self.factor if self.factor > 0 else 0.0
             self.fits[hi, 0] = h.fit(observation, unexplained=unexplained)
 
+            #print("         b) physics")
             _, T_phys = self.pir.simulate(h)
             h_phys = h.duplicate()
             # h_phys.transformation[:3, :3] = T_phys[:3, :3]  # TODO change in refine as well
