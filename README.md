@@ -1,5 +1,10 @@
 # hsr-grasping
 
+## Using the compose file(s)
+
+run `docker-compose up` from the compose/<pipeline_name> directory.
+This will build the Dockerfiles on the first run, and start up the pipeline. 
+
 ## Build Dockerfile with global context
 In hsr-grasping:
 
@@ -42,6 +47,4 @@ For example:
 - args:="-h" to see all available arguments.
 - args:="--models \"021_bleach_cleanser 002_master_chef_can\" " to only load those two models instead of all of them.
 
-## Using the compose file(s)
 
-run `docker-compose up` from the compose/<pipeline_name> directory
