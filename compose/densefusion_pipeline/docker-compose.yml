@@ -3,26 +3,26 @@ services:
 
   detect:
     image: "maskrcnn"
+    build: 
+      context: ../../
+      dockerfile: src/maskrcnn/Dockerfile
     network_mode: "host"
     runtime: "nvidia"
-    # user: root
     volumes:
       - ../../:/hsr-grasping
       - ../../src:/maskrcnn/src
-
     extra_hosts:
       - "hsrb:10.0.0.143"
-
     environment:
       # ROS_MASTER_URI:     # empty value means use same as host
       ROS_MASTER_URI: "http://hsrb:11311"
-
     command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
-
-  # run seperate densefusion containers for estimation and refinement or run both in the same container ?
 
   estimate_refine:
     image: "densefusion"
+    build: 
+      context: ../../
+      dockerfile: src/densefusion/Dockerfile
     network_mode: "host"
     runtime: "nvidia"
     volumes:
@@ -34,78 +34,22 @@ services:
       Xvfb: 99 -screen 0 1920x1080x24
       DISPLAY: ${DISPLAY}
       QT_X11_NO_MITSHM: 1
-      #environment:
-      #ROS_MASTER_URI: "http://hsrb:11311"
-
-  #   # adds hostnames to the containers /etc/hosts
-  #   # extra_hosts:
-  #   #   - "hsrb:10.0.0.143"
-
     entrypoint: ""
     command: bash -c "source /densefusion/catkin_ws/devel/setup.bash;
                       ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_estimation.py"
 
-  #   stdin_open: true
-  #   tty: true
-
-  # refine:
-  #   image: "densefusion"
-  #   network_mode: "host"
-  #   runtime: "nvidia"
-  #   volumes:
-  #     - ../../:/hsr-grasping
-  #     - ../../src:/densefusion/src
-  #     - /tmp/.X11-unix:/tmp/.X11-unix:rw
-  #   environment:
-  #     ROS_MASTER_URI: "http://hsrb:11311"
-  #     Xvfb: 99 -screen 0 1920x1080x24
-  #     DISPLAY: ${DISPLAY}
-  #     QT_X11_NO_MITSHM: 1
-
-    
-  #   entrypoint: ""
-  #   command: bash -c "source /densefusion/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_refinement.py"
-
-  #   stdin_open: true
-  #   tty: true
-
-  # estimate_and_refine:
-  #   image: "densefusion"
-  #   network_mode: "host"
-  #   runtime: "nvidia"
-  #   volumes:
-  #     - ../../:/hsr-grasping
-  #     - ../../src:/densefusion/src
-  #     - /tmp/.X11-unix:/tmp/.X11-unix:rw
-  #   environment:
-  #     ROS_MASTER_URI: "http://hsrb:11311"
-  #     Xvfb: 99 -screen 0 1920x1080x24
-  #     DISPLAY: ${DISPLAY}
-  #     QT_X11_NO_MITSHM: 1
-   
-  #   entrypoint: ""
-  #   command: bash -c "source /densefusion/catkin_ws/devel/setup.bash &
-  #                     ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_estimation.py &
-  #                     ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_refinement.py &"
-
-  #   #stdin_open: true
-  #   #tty: true
-    
-
   grasp:
     image: "hsr-grasping"
+    build:
+      context: ../../
+      dockerfile: src/task/Dockerfile
     network_mode: "host"
     runtime: "nvidia"
     volumes:
     - ../../src:/task/src
     - ../../lm:/task/lm
-
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
-      # DISPLAY:
-      # QT_X11_NO_MITSHM: 1
-
     command: bash -c "source /task/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /task/src/task/ros_grasp_object.py"
-
     stdin_open: true
     tty: true

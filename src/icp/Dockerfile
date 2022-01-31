@@ -26,7 +26,7 @@ RUN echo "source /icp/catkin_ws/devel/setup.bash" >> /root/.bashrc
 
 # clone and build message and service definitions
 RUN /bin/bash -c 'cd /icp/catkin_ws/src; \
-                  git clone https://gitlab+deploy-token-28:VxqryrgVYvjaUg4tyJdY@rgit.acin.tuwien.ac.at/msuchi/object_detector_msgs.git'
+                  git clone https://github.com/v4r-tuwien/object_detector_msgs.git'
 RUN /bin/bash -c '. /opt/ros/kinetic/setup.bash; cd /icp/catkin_ws; catkin build'
 
 # clone and build ros_numpy
