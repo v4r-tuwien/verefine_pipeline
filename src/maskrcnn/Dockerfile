@@ -57,8 +57,8 @@ RUN /bin/bash -c '. /opt/ros/kinetic/setup.bash; cd /maskrcnn/catkin_ws; catkin 
 # ----------------
 
 # smh get errors otherwise
-RUN pip3 install --upgrade pip
-RUN pip3 install wheel setuptools
+RUN pip3 install --upgrade wheel setuptools==51.0.0 pip==20.3.4
+
 
 # clone and build Mask R-CNN (note: replace tensorflow with tensorflow-gpu)
 WORKDIR /maskrcnn/3rdparty
@@ -66,10 +66,11 @@ RUN /bin/bash -c 'cd /maskrcnn/3rdparty; \
                   git clone https://github.com/matterport/Mask_RCNN.git'
 
 WORKDIR /maskrcnn/3rdparty/Mask_RCNN
-RUN sed -i '/tensorflow/ d' requirements.txt && \
-    sed -i 's/>=2.0.8/==2.2.4/' requirements.txt && \
-    pip3 install --no-cache-dir -r requirements.txt && \
-    pip3 install --no-cache-dir tensorflow-gpu==1.12.0
+RUN pip3 install --no-cache-dir numpy scipy Pillow cython matplotlib scikit-image tensorflow-gpu==1.12.0 keras==2.2.4 opencv-python h5py imgaug IPython
+#sed -i '/tensorflow/ d' requirements.txt && \
+#    sed -i 's/>=2.0.8/==2.2.4/' requirements.txt && \
+#    pip3 install --no-cache-dir -r requirements.txt && \
+#    pip3 install --no-cache-dir tensorflow-gpu==1.12.0
 RUN python3 setup.py install
 
 # hack from https://medium.com/@beta_b0t/how-to-setup-ros-with-python-3-44a69ca36674

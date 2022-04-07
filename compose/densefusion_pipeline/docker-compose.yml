@@ -2,7 +2,7 @@ version: '2.4'
 services:
 
   detect:
-    image: "maskrcnn"
+    image: "vp_maskrcnn"
     build: 
       context: ../../
       dockerfile: src/maskrcnn/Dockerfile
@@ -19,7 +19,7 @@ services:
     command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
 
   estimate_refine:
-    image: "densefusion"
+    image: "vp_densefusion"
     build: 
       context: ../../
       dockerfile: src/densefusion/Dockerfile
@@ -37,9 +37,11 @@ services:
     entrypoint: ""
     command: bash -c "source /densefusion/catkin_ws/devel/setup.bash;
                       ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_estimation.py"
+    stdin_open: true
+    tty: true
 
   grasp:
-    image: "hsr-grasping"
+    image: "vp_hsr-grasping"
     build:
       context: ../../
       dockerfile: src/task/Dockerfile

@@ -14,7 +14,7 @@ MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
 
 # essentials
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && apt-get install -y --allow-unauthenticated --no-install-recommends \
     apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip python-tk python-catkin-tools \
     && rm -rf /var/lib/apt/lists/*
 
@@ -63,8 +63,9 @@ RUN python setup.py install
 
 # install python requirements
 WORKDIR /densefusion
-RUN pip install --upgrade pip
+RUN pip install --upgrade pip==20.3.4
 RUN pip install wheel  # smh get errors otherwise
+RUN pip install https://download.pytorch.org/whl/cu100/torchvision-0.4.1%2Bcu100-cp27-cp27mu-linux_x86_64.whl
 COPY ./src/densefusion/requirements.txt /densefusion/requirements.txt
 RUN pip install -r requirements.txt
 COPY ./src/verefine/requirements.txt /densefusion/requirements_verefine.txt

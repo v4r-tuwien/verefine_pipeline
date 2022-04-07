@@ -73,7 +73,7 @@ RUN python setup.py install
 
 # install python requirements
 WORKDIR /task
-RUN pip install --upgrade pip
+RUN pip install --upgrade pip==20.3.4
 RUN pip install wheel  # smh get errors otherwise
 COPY ./src/task/requirements.txt /task/requirements.txt
 RUN pip install -r requirements.txt
