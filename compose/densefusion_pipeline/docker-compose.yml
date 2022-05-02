@@ -29,6 +29,7 @@ services:
       - ../../:/hsr-grasping
       - ../../src:/densefusion/src
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ~/.Xauthority:/root/.Xauthority
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
       Xvfb: 99 -screen 0 1920x1080x24
