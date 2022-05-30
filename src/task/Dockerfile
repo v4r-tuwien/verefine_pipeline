@@ -94,10 +94,10 @@ COPY ./src/__init__.py /task/src
 ENV PYTHONPATH=/task:/task/src:$PYTHONPATH
 
 # copy data for rendering of visualizations
-COPY ./data/models.zip /task/data/models.zip
+#COPY ./data/models.zip /task/data/models.zip
 RUN mkdir /verefine
 RUN mkdir /verefine/data
-RUN unzip /task/data/models.zip -d /verefine/data
+#RUN unzip /task/data/models.zip -d /verefine/data
 
 # entry point
 COPY ./src/densefusion/ros_entrypoint.sh /
