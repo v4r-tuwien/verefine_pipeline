@@ -2,10 +2,19 @@
 
 ## Using the compose file(s)
 
-run `docker-compose up` from the compose/<pipeline_name> directory.
-This will build the Dockerfiles on the first run, and start up the pipeline. 
+The following commands will download the necessary data and then build all the docker containers and start them. 
+
+If the containers were already built before, you can still use the same commands (except download_data.sh) to start the pipeline. 
+
+```
+./download_data.sh
+cd compose/densefusion_pipeline
+xhost +local:'hostname'
+docker-compose up
+```
 
 ## Build Dockerfile with global context
+
 In hsr-grasping:
 
 `docker build -f src/densefusion/Dockerfile . -t densefusion`
@@ -46,5 +55,4 @@ For example:
 
 - args:="-h" to see all available arguments.
 - args:="--models \"021_bleach_cleanser 002_master_chef_can\" " to only load those two models instead of all of them.
-
 
