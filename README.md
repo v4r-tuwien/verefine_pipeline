@@ -12,6 +12,7 @@ cd compose/densefusion_pipeline
 xhost +local:'hostname'
 docker-compose up
 ```
+This will advertise a service ```/hsr_grasping/get_poses``` of the type [get_poses.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/get_poses.srv). The response represents the poses of the detected objects in the camera frame. 
 
 ## Build Dockerfile with global context
 
