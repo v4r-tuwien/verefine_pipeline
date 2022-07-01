@@ -1,4 +1,7 @@
-# hsr-grasping
+# Verefine Pipeline
+Pipeline for detecting objects and estimating and refining their pose. 
+
+The pipeline is implemented to use YCB-V objects and configured for the use on our Toyota HSR Sasha.
 
 ## Startup using the compose file(s)
 
@@ -16,6 +19,12 @@ Three Docker containers will be started:
 - detect: [Mask-RCNN](https://github.com/matterport/Mask_RCNN) trained on YCB-V Dataset
 - estimate_refine: Pose Estimation with [DenseFusion](https://github.com/j96w/DenseFusion) and refinement using [VeREFINE](https://github.com/dornik/verefine)
 - grasp: Node that calls detect, estimate and refine services and delivers object poses
+ 
+## Visualization
+In RVIZ you can view the final refined poses and the object segmentation by Mask-RCNN. 
+They are published as images to these topics:
+- ```/hsr_grasping/segmentation```
+- ```/hsr_grasping/refined_poses```
  
 ## Service 
 The pipeline will advertise a service ```/hsr_grasping/get_poses``` of the type [get_poses.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/get_poses.srv). The response represents the refined poses of the detected objects in the camera frame.
@@ -83,6 +92,21 @@ float32 score
 BoundingBox bbox
 int64[] mask
 ```
+
+## Configurations
+### ROS Master
+The ROS Master is set in the docker-compose.yml file for each container 
+```
+environment:
+      ROS_MASTER_URI: "http://hsrb:11311"
+```
+### ROS Namespace
+The Namespace is also defined in the docker-compose.yml file for each container. It is passed as command with the python script calls like this:
+```
+command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
+```
+
+If you change it, the service names and visualization topics will change accordingly.
 
 ## Build Dockerfile with global context
 
