@@ -1,6 +1,6 @@
 # hsr-grasping
 
-## Using the compose file(s)
+## Startup using the compose file(s)
 
 The following commands will download the necessary data and then build all the docker containers and start them. 
 
@@ -12,7 +12,77 @@ cd compose/densefusion_pipeline
 xhost +local:'hostname'
 docker-compose up
 ```
-This will advertise a service ```/hsr_grasping/get_poses``` of the type [get_poses.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/get_poses.srv). The response represents the poses of the detected objects in the camera frame. 
+Three Docker containers will be started:
+- detect: [Mask-RCNN](https://github.com/matterport/Mask_RCNN) trained on YCB-V Dataset
+- estimate_refine: Pose Estimation with [DenseFusion](https://github.com/j96w/DenseFusion) and refinement using [VeREFINE](https://github.com/dornik/verefine)
+- grasp: Node that calls detect, estimate and refine services and delivers object poses
+ 
+## Service 
+The pipeline will advertise a service ```/hsr_grasping/get_poses``` of the type [get_poses.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/get_poses.srv). The response represents the refined poses of the detected objects in the camera frame.
+
+The services that are internally called are 
+- ```/hsr_grasping/detect_objects``` of the type [detectron2_service_server.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/detectron2_service_server.srv) 
+- ```/hsr_grasping/estimate_poses``` of the type [estimate_poses.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/estimate_poses.srv) 
+- ```/hsr_grasping/refine_poses``` of the type [refine_poses.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/refine_poses.srv)
+
+### Main Service
+#### get_poses.srv
+```
+---
+PoseWithConfidence[] poses
+```
+### Internal Services
+#### detectron2_service_server.srv
+```
+sensor_msgs/Image image
+---
+object_detector_msgs/Detections detections
+```
+
+#### estimate_poses.srv
+```
+Detection det
+sensor_msgs/Image rgb
+sensor_msgs/Image depth
+---
+PoseWithConfidence[] poses
+```
+
+#### refine_poses.srv
+```
+Detection det
+sensor_msgs/Image rgb
+sensor_msgs/Image depth
+PoseWithConfidence[] poses
+---
+PoseWithConfidence[] poses
+```
+
+### Important Messages
+#### PoseWithConfidence.msg
+```
+string name
+geometry_msgs/Pose pose
+float32 confidence
+```
+
+#### Detecions.msg
+```
+Header header
+
+uint32 height
+uint32 width
+
+Detection[] detections
+```
+
+#### Detection.msg
+```
+string name
+float32 score
+BoundingBox bbox
+int64[] mask
+```
 
 ## Build Dockerfile with global context
 
