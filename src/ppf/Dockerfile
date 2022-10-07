@@ -74,8 +74,6 @@ RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
 
 RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /home/v4r/catkin_ws; catkin build -DPPFRecognizer_DIR=/home/v4r/ppf/build -DCMAKE_MODULE_PATH="/home/v4r/ppf/cmake;${CMAKE_MODULE_PATH}"'
 
-RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src/ppf_recognizer_ros; sudo touch CATKIN_IGNORE;'
-
 ## setup entrypoint
 COPY ./ros_entrypoint.sh /
 ENTRYPOINT ["/ros_entrypoint.sh"]
