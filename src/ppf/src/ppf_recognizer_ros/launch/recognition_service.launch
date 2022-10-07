@@ -1,0 +1,17 @@
+<launch>
+
+  <arg name="models" default="/home/v4r/models" doc="Models directory"/>
+  <arg name="config" default="/home/v4r/catkin_ws/src/ppf_recognizer_ros/cfg"
+       doc="Object Recognition XML configuration directory"/>
+  <arg name="args" default=""
+       doc="Additional arguments as stated in the library. For help args:=-h."/>
+
+  <node pkg="ppf_recognizer_ros" type="recognition_service"
+        name="recognition_service" output="screen" args="$(arg args)">
+
+    <param name="models_dir" value="$(arg models)"/>
+    <param name="cfg_dir" value="$(arg config)"/>
+
+  </node>
+
+</launch>
