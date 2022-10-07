@@ -93,7 +93,7 @@ COPY ./data /densefusion/data/
 # RUN mkdir /densefusion
 # RUN mkdir /densefusion/data
 RUN mkdir /verefine
-#RUN unzip /densefusion/data/models.zip -d /verefine/data
+RUN unzip /densefusion/data/models.zip -d /verefine/data
 
 # entry point
 WORKDIR /densefusion

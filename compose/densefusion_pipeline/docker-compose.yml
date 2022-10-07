@@ -2,39 +2,49 @@ version: '2.4'
 services:
 
   detect:
-    image: "vp_maskrcnn"
-    build: 
-      context: ../../
-      dockerfile: src/maskrcnn/Dockerfile
+    image: "maskrcnn"
     network_mode: "host"
     runtime: "nvidia"
+    # user: root
     volumes:
       - ../../:/hsr-grasping
       - ../../src:/maskrcnn/src
+
     extra_hosts:
       - "hsrb:10.0.0.143"
+
     environment:
       # ROS_MASTER_URI:     # empty value means use same as host
       ROS_MASTER_URI: "http://hsrb:11311"
+      ROS_IP: "10.0.0.206"
+
     command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
 
+  # run seperate densefusion containers for estimation and refinement or run both in the same container ?
+
   estimate_refine:
-    image: "vp_densefusion"
-    build: 
-      context: ../../
-      dockerfile: src/densefusion/Dockerfile
+    image: "densefusion"
     network_mode: "host"
     runtime: "nvidia"
     volumes:
       - ../../:/hsr-grasping
       - ../../src:/densefusion/src
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ~/.Xauthority:/root/.Xauthority
+    extra_hosts:
+      - "hsrb:10.0.0.143"
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
       Xvfb: 99 -screen 0 1920x1080x24
       DISPLAY: ${DISPLAY}
-      QT_X11_NO_MITSHM: 1
+      QT_X11_NO_MITSHM: 1     
+      ROS_IP: "10.0.0.206"
+      #environment:
+      #ROS_MASTER_URI: "http://hsrb:11311"
+
+  #   # adds hostnames to the containers /etc/hosts
+  #   # extra_hosts:
+  #   #   - "hsrb:10.0.0.143"
+
     entrypoint: ""
     command: bash -c "source /densefusion/catkin_ws/devel/setup.bash;
                       ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_estimation.py"
@@ -42,17 +52,21 @@ services:
     tty: true
 
   grasp:
-    image: "vp_hsr-grasping"
-    build:
-      context: ../../
-      dockerfile: src/task/Dockerfile
+    image: "hsr-grasping"
     network_mode: "host"
     runtime: "nvidia"
     volumes:
     - ../../src:/task/src
     - ../../lm:/task/lm
+    extra_hosts:
+      - "hsrb:10.0.0.143"
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
+      ROS_IP: "10.0.0.206"
+      # DISPLAY:
+      # QT_X11_NO_MITSHM: 1
+
     command: bash -c "source /task/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /task/src/task/ros_grasp_object.py"
+
     stdin_open: true
     tty: true

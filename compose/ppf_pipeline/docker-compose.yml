@@ -7,8 +7,8 @@ services:
     runtime: "nvidia"
     # user: root
 
-    # extra_hosts:
-    #   - "hsrb:10.0.0.143"
+    extra_hosts:
+      - "hsrb:10.0.0.143"
 
     environment:
       # ROS_MASTER_URI:     # empty value means use same as host
@@ -23,10 +23,9 @@ services:
       - ../../data/ycbv_ppf_models:/home/v4r/models
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
-
-    # adds hostnames to the containers /etc/hosts
-    # extra_hosts:
-    #   - "hsrb:10.0.0.143"
+      
+    extra_hosts:
+      - "hsrb:10.0.0.143"
 
     command: bash -c "source /home/v4r/catkin_ws/devel/setup.bash; roslaunch ppf_recognizer_ros hsr_ppf_pipeline.launch"
 
@@ -54,6 +53,8 @@ services:
       ROS_MASTER_URI: "http://hsrb:11311"
       # DISPLAY:
       # QT_X11_NO_MITSHM: 1
+    extra_hosts:
+      - "hsrb:10.0.0.143"
     
     entrypoint: ""
     command: bash -c "source /densefusion/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_refinement.py"
@@ -69,6 +70,9 @@ services:
       ROS_MASTER_URI: "http://hsrb:11311"
       # DISPLAY:
       # QT_X11_NO_MITSHM: 1
+      
+    extra_hosts:
+       - "hsrb:10.0.0.143"
 
     command: bash -c "source /task/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /task/src/task/ros_grasp_object.py"
 
