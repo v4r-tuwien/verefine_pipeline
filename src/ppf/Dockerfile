@@ -48,7 +48,7 @@ RUN /bin/bash -c 'cd /home/v4r/; git clone --branch v2.4.3 https://github.com/py
                   cd ../..; sudo rm -rf pybind11'
 
 # clone ppf repo
-COPY /src/ppf /home/v4r/ppf
+COPY src/ppf/src/ppf /home/v4r/ppf
 #RUN /bin/bash -c 'cd /home/v4r; git clone https://gitlab+deploy-token-24:_QgAnkQE-5yrTLP7woPV@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf.git; cd ppf; git checkout 79c647c6'
 RUN /bin/bash -c 'cd /home/v4r/ppf; sudo mkdir build; cd build; sudo cmake ..; sudo make -j$(nproc)'
 # RUN /bin/bash -c 'cd home/v4r; rm -rf ppf' # uncomment once ppf repo supports installing files
@@ -59,12 +59,12 @@ RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /home/v4r/catkin_ws; catkin 
 RUN echo "source /home/v4r/catkin_ws/devel/setup.bash" >> /home/v4r/.bashrc
 
 # clone ros packages, gitlab deploy tokens are needed since the repos aren't public
-COPY /src/ppf_recognizer_ros /home/v4r/catkin_ws/src/ppf_recognizer_ros
+COPY src/ppf/src/ppf_recognizer_ros /home/v4r/catkin_ws/src/ppf_recognizer_ros
 #RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
 #                  git clone https://gitlab+deploy-token-22:zKCM9FnYr86bgaABY63_@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf_recognizer_ros.git; \
 #                  cd ppf_recognizer_ros; git checkout bbf03129'
 
-COPY /src/ppf_recognizer_ros_msgs /home/v4r/catkin_ws/src/ppf_recognizer_ros_msgs
+COPY src/ppf/src/ppf_recognizer_ros_msgs /home/v4r/catkin_ws/src/ppf_recognizer_ros_msgs
 #RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
 #                  git clone https://gitlab+deploy-token-23:xzQLssogTa-t5igeXrv8@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf_recognizer_ros_msgs.git; \
  #                 cd ppf_recognizer_ros_msgs; git checkout 05206cc5'
@@ -75,6 +75,6 @@ RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
 RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /home/v4r/catkin_ws; catkin build -DPPFRecognizer_DIR=/home/v4r/ppf/build -DCMAKE_MODULE_PATH="/home/v4r/ppf/cmake;${CMAKE_MODULE_PATH}"'
 
 ## setup entrypoint
-COPY ./ros_entrypoint.sh /
+COPY ./src/ppf/ros_entrypoint.sh /
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]

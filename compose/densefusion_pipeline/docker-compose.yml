@@ -34,9 +34,9 @@ services:
       - "hsrb:10.0.0.143"
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
-      Xvfb: 99 -screen 0 1920x1080x24
-      DISPLAY: ${DISPLAY}
-      QT_X11_NO_MITSHM: 1     
+      #Xvfb: 99 -screen 0 1920x1080x24
+      #DISPLAY: ${DISPLAY}
+      #QT_X11_NO_MITSHM: 1     
       ROS_IP: "10.0.0.206"
       #environment:
       #ROS_MASTER_URI: "http://hsrb:11311"

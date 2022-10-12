@@ -76,9 +76,10 @@ RUN pip install -r requirements_renderer.txt
 # install tinyobjloader from source (pypl doesn't work) -- required for rendering in verefine
 WORKDIR /task/3rdparty
 RUN pip install pybind11
-RUN git clone https://github.com/syoyo/tinyobjloader.git && \
-    cd tinyobjloader/python/ && \
-    python setup.py install
+#RUN git clone https://github.com/syoyo/tinyobjloader.git && \
+#    cd tinyobjloader && \
+#    python setup.py install
+RUN pip install tinyobjloader==2.0.0rc7
 
 # copy src files
 WORKDIR /densefusion
@@ -94,7 +95,9 @@ COPY ./data /densefusion/data/
 # RUN mkdir /densefusion
 # RUN mkdir /densefusion/data
 RUN mkdir /verefine
-RUN unzip /densefusion/data/models.zip -d /verefine/data
+#RUN unzip /densefusion/data/models.zip -d /verefine/data
+
+RUN pip install pyopengl
 
 # entry point
 WORKDIR /densefusion
