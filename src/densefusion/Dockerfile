@@ -86,6 +86,7 @@ COPY ./src/densefusion /densefusion/src/densefusion
 COPY ./src/util /densefusion/src/util
 COPY ./src/verefine /densefusion/src/verefine
 COPY ./src/__init__.py /densefusion/src
+COPY ./src/config.json /densefusion/src/config.json
 ENV PYTHONPATH=/densefusion:/densefusion/src:$PYTHONPATH
 
 # copy data
