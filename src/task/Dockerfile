@@ -91,6 +91,7 @@ WORKDIR /task
 COPY ./src/task /task/src/task
 COPY ./src/util /task/src/util
 COPY ./src/__init__.py /task/src
+COPY ./src/config.json /task/src/config.json
 ENV PYTHONPATH=/task:/task/src:$PYTHONPATH
 
 # copy data for rendering of visualizations
