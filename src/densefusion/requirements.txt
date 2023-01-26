@@ -1,6 +1,0 @@
-pillow
-numpy==1.16.5
-scipy==1.2.0
-pyyaml
-logging
-matplotlib==2.1.0

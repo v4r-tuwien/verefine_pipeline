@@ -1,5 +1,8 @@
 import numpy as np
 import tensorflow as tf_backend
+import os
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+
 
 from mrcnn.config import Config
 from mrcnn import utils
@@ -35,7 +38,7 @@ class MaskRcnnDetector:
             self.config.DETECTION_NMS_THRESHOLD = 0.5
 
             self.detection_model = modellib.MaskRCNN(mode="inference", config=self.config, model_dir="/")
-            self.detection_model.load_weights("/maskrcnn/data/mask_rcnn_ycbv_0005.h5", by_name=True)  # TODO load
+            self.detection_model.load_weights("/maskrcnn/data/maskrcnn_ycbv.h5", by_name=True)  # TODO load
 
             self.detection_labels = list(range(1, 22))  # TODO load
 

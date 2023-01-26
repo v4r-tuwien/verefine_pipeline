@@ -18,15 +18,15 @@ import scipy.spatial.transform as scit
 
 import message_filters
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from std_srvs.srv import Empty, EmptyResponse
 from object_detector_msgs.msg import PoseWithConfidence
 from object_detector_msgs.srv import detectron2_service_server, estimate_poses, refine_poses, get_poses, get_posesResponse
 #from grasping_pipeline.msg import ExecuteGraspAction, ExecuteGraspGoal
 #from sasha_handover.msg import HandoverAction, HandoverGoal
 
-from src.util.dataset import YcbvDataset
-from src.util.renderer import Renderer
+from util.renderer import EglRenderer as Renderer
+from util.dataset import YcbvDataset
 
 
 # === define pipeline clients ===
@@ -64,6 +64,7 @@ def refine(rgb, depth, detection, poses):
 # === define grasp service ===
 RGB_TOPIC = "/hsrb/head_rgbd_sensor/rgb/image_rect_color"
 DEPTH_TOPIC = "/hsrb/head_rgbd_sensor/depth_registered/image_rect_raw"
+CAMERA_INFO = "/hsrb/head_rgbd_sensor/rgb/camera_info"
 
 
 class Grasper:
@@ -74,7 +75,8 @@ class Grasper:
         self.working = False
 
         self.dataset = YcbvDataset()
-        self.renderer = Renderer(self.dataset)
+        width, height, intrinsics = self.dataset.width, self.dataset.height, self.dataset.camera_intrinsics
+        self.renderer = Renderer(self.dataset, width, height)
 
         self.pub_segmentation = rospy.Publisher("/hsr_grasping/segmentation", Image)
         # self.pub_initial = rospy.Publisher("/hsr_grasping/initial_poses", Image)
@@ -105,7 +107,7 @@ class Grasper:
         self.working = True
         gc.collect()
 
-        self.renderer.create_egl_context()  # TODO needed?
+        #self.renderer._create_egl_context()  # TODO needed?
 
         self.current_poses = []
 
@@ -144,17 +146,17 @@ class Grasper:
             st = time.time()
             instance_poses = estimate(self.rgb, self.depth, detection)
             print("   received pose.")
-            instance_poses = [pose for pose in instance_poses if pose.confidence > th_estimation]
-            if len(instance_poses) == 0:
-                print("all poses for %s rejected after estimation" % detection.name)
-                continue
+            #instance_poses = [pose for pose in instance_poses if pose.confidence > th_estimation]
+            #if len(instance_poses) == 0:
+            #    print("all poses for %s rejected after estimation" % detection.name)
+            #    continue
             # assert len(instance_poses) == 5  # TODO
             # for instance_pose in instance_poses:
             #   self.vis_pose(instance_poses, "_estimated")
 
             # refine candidate poses
-            print("requesting pose refinement...")
-            instance_poses = refine(self.rgb, self.depth, detection, instance_poses)
+            #print("requesting pose refinement...")
+            #instance_poses = refine(self.rgb, self.depth, detection, instance_poses)
             duration = time.time() - st
             print("   received refined poses.")
             if len(instance_poses) == 0:
@@ -184,10 +186,18 @@ class Grasper:
 
         for ii, detection in enumerate(detections):
             name = detection.name
+            
+            try:
+               f = open("/verefine/data/ycbv_names.json")
+               ycbv_names = json.load(f)
+               f.close()
+            except:
+               print("YCBV_names not found")
+            
             obj_id = -1
-            for idx, obj_name in self.dataset.obj_names.items():
-                if obj_name == name:
-                    obj_id = idx + 1
+            for number in ycbv_names:
+                if ycbv_names[number] == name:
+                    obj_id = int(number) #+ 1 #?
                     break
             assert obj_id > 0  # should start from 1
 
@@ -225,7 +235,7 @@ class Grasper:
         if len(confidences) > 0:
             best_hypothesis = np.argmax(confidences)
             best_pose = poses[best_hypothesis]
-            self.vis_pose(poses)#best_pose)
+            #self.vis_pose(poses) #bestpose)
 
             self.current_poses = poses
         else:
@@ -329,10 +339,9 @@ class Grasper:
 
     def vis_pose(self, poses):
         rgb = ros_numpy.numpify(self.rgb)
-        intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
-                               0.0, 538.085452058436, 233.0483557773859,
-                               0.0, 0.0, 1.0]).reshape(3, 3)
-
+        camera_info = rospy.wait_for_message(CAMERA_INFO, CameraInfo, timeout=10)
+        intrinsics = np.array(camera_info.K).reshape(3, 3)
+        
         obj_ids = []
         obj_trafos = []
         for pose in poses:
@@ -340,7 +349,7 @@ class Grasper:
            obj_id = -1
            for idx, obj_name in self.dataset.obj_names.items():
                if obj_name == name:
-                   obj_id = idx + 1
+                   obj_id = int(idx)
                    break
            assert obj_id > 0  # should start from 1
            obj_ids.append(obj_id)
@@ -353,8 +362,8 @@ class Grasper:
 
         #obj_trafos = [T_obj]
         rendered = self.renderer.render(obj_ids, obj_trafos,
-                                        np.matrix(np.eye(4)), intrinsics,
-                                        mode='color+depth+seg')
+                                        np.matrix(np.eye(4)), intrinsics)#,
+                                        #mode='color+depth+seg')
 
         vis_pose = np.float32(rgb.copy()) / 255
         highlight = np.float32(rendered[0]) / 255
