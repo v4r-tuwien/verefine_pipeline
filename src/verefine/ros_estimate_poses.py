@@ -47,6 +47,9 @@ if __name__ == "__main__":
     # VeREFINE utilities
     dataset = YcbvDataset()
     width, height, intrinsics = dataset.width, dataset.height, dataset.camera_intrinsics
+    intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
+                           0.0, 538.085452058436, 233.0483557773859,
+                           0.0, 0.0, 1.0]).reshape(3, 3)
     simulator, renderer = Simulator(dataset), Renderer(dataset, width, height)
     plane_detector = PlaneDetector(width, height, intrinsics, down_scale=1)
     # DenseFusion
@@ -115,7 +118,9 @@ if __name__ == "__main__":
 
         # refine/verify poses using VeREFINE
         # IN list of lists: num_objects x num_hypotheses_per -- OUT list: num_objects x 1 (best)
-        vf.mode = np.clip(config.MODE, 0, 5)
+        mode = config.MODE
+        mode = 3
+        vf.mode = np.clip(mode, 0, 5)
         refined_hypotheses = vf.refine(observation, hypotheses)
 
         # visualize best hypothesis per object

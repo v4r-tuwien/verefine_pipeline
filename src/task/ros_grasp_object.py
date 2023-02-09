@@ -159,7 +159,7 @@ class Grasper:
             #instance_poses = refine(self.rgb, self.depth, detection, instance_poses)
             duration = time.time() - st
             print("   received refined poses.")
-            if len(instance_poses) == 0:
+            if instance_poses is None or len(instance_poses) == 0:
                 print("all poses for %s rejected after refinement" % detection.name)
                 continue
             # for instance_pose in instance_poses:
@@ -181,8 +181,8 @@ class Grasper:
         if not os.path.exists("/task/lm"):
             os.mkdir("/task/lm")
         filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        PImage.fromarray(ros_numpy.numpify(self.rgb)).save("/task/lm/%s_rgb.png" % (filename))
-        PImage.fromarray(ros_numpy.numpify(self.depth)).save("/task/lm/%s_depth.png" % (filename))
+        #PImage.fromarray(ros_numpy.numpify(self.rgb)).save("/task/lm/%s_rgb.png" % (filename))
+        #PImage.fromarray(ros_numpy.numpify(self.depth)).save("/task/lm/%s_depth.png" % (filename))
 
         for ii, detection in enumerate(detections):
             name = detection.name
