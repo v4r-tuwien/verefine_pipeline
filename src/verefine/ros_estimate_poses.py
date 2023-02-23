@@ -28,7 +28,7 @@ import verefine.config as config
 
 # ROS wrapper
 import rospy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import Pose, Point, Quaternion
 from object_detector_msgs.msg import BoundingBox, Detection, PoseWithConfidence
 from object_detector_msgs.srv import estimate_poses, estimate_posesResponse
@@ -40,6 +40,8 @@ from util.plane_detector import PlaneDetector
 from util.dataset import YcbvDataset
 from densefusion.densefusion import DenseFusion  # includes estimator and refiner
 
+CAMERA_INFO = "/hsrb/head_rgbd_sensor/rgb/camera_info"
+ESTIMATE_MODE = 3
 
 if __name__ == "__main__":
 
@@ -47,11 +49,14 @@ if __name__ == "__main__":
     # VeREFINE utilities
     dataset = YcbvDataset()
     width, height, intrinsics = dataset.width, dataset.height, dataset.camera_intrinsics
+    #camera_info = rospy.wait_for_message(CAMERA_INFO, CameraInfo, timeout=100)
+    #intrinsics = np.array(camera_info.K).reshape(3, 3)
     intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
                            0.0, 538.085452058436, 233.0483557773859,
                            0.0, 0.0, 1.0]).reshape(3, 3)
     simulator, renderer = Simulator(dataset), Renderer(dataset, width, height)
     plane_detector = PlaneDetector(width, height, intrinsics, down_scale=1)
+    
     # DenseFusion
     df = DenseFusion(width, height)
     # wrap with VeREFINE (refinement and verification)
@@ -80,6 +85,7 @@ if __name__ == "__main__":
         observation_mask = np.zeros((height * width), dtype=np.uint8)
         observation_mask[det_mask] = 1 # compose masks over all detections
         observation_mask = observation_mask.reshape((height, width))  
+
         # find id to name
         ycbv_names = None
         try:
@@ -119,7 +125,7 @@ if __name__ == "__main__":
         # refine/verify poses using VeREFINE
         # IN list of lists: num_objects x num_hypotheses_per -- OUT list: num_objects x 1 (best)
         mode = config.MODE
-        mode = 3
+        mode = ESTIMATE_MODE
         vf.mode = np.clip(mode, 0, 5)
         refined_hypotheses = vf.refine(observation, hypotheses)
 
@@ -127,6 +133,8 @@ if __name__ == "__main__":
         vis = rgb.copy()
         colors = cm.get_cmap('tab10')
         for i, hypothesis in enumerate(refined_hypotheses):
+            print([int(hypothesis['obj_id']) - 1])
+            print([hypothesis['pose']])
             est_depth, _ = renderer.render([int(hypothesis['obj_id']) - 1], [hypothesis['pose']],
                                            observation['extrinsics'], observation['intrinsics'])
             contour, _ = cv.findContours(np.uint8(est_depth > 0), cv.RETR_CCOMP,

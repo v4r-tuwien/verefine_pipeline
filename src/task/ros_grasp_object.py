@@ -12,9 +12,12 @@ import gc
 
 import time
 from datetime import datetime
+from scipy.spatial.transform import Rotation as R
 
 import cv2
 import scipy.spatial.transform as scit
+from matplotlib import cm
+from PIL import Image as Img
 
 import message_filters
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
@@ -26,6 +29,7 @@ from object_detector_msgs.srv import detectron2_service_server, estimate_poses, 
 #from sasha_handover.msg import HandoverAction, HandoverGoal
 
 from util.renderer import EglRenderer as Renderer
+from util.plane_detector import PlaneDetector
 from util.dataset import YcbvDataset
 
 
@@ -51,16 +55,6 @@ def estimate(rgb, depth, detection):
         print("Service call failed: %s" % e)
 
 
-def refine(rgb, depth, detection, poses):
-    rospy.wait_for_service('refine_pose')
-    try:
-        refine_pose = rospy.ServiceProxy('refine_pose', refine_poses)
-        response = refine_pose(detection, rgb, depth, poses)
-        return response.poses
-    except rospy.ServiceException as e:
-        print("Service call failed: %s" % e)
-
-
 # === define grasp service ===
 RGB_TOPIC = "/hsrb/head_rgbd_sensor/rgb/image_rect_color"
 DEPTH_TOPIC = "/hsrb/head_rgbd_sensor/depth_registered/image_rect_raw"
@@ -73,10 +67,16 @@ class Grasper:
         self.rgb = None
         self.depth = None
         self.working = False
-
+        self.observation_mask = False
+        
         self.dataset = YcbvDataset()
         width, height, intrinsics = self.dataset.width, self.dataset.height, self.dataset.camera_intrinsics
+        intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
+                        0.0, 538.085452058436, 233.0483557773859,
+                        0.0, 0.0, 1.0]).reshape(3, 3)
+        self.intrinsics = intrinsics
         self.renderer = Renderer(self.dataset, width, height)
+        self.plane_detector = PlaneDetector(width, height, intrinsics, down_scale=1)
 
         self.pub_segmentation = rospy.Publisher("/hsr_grasping/segmentation", Image)
         # self.pub_initial = rospy.Publisher("/hsr_grasping/initial_poses", Image)
@@ -135,6 +135,7 @@ class Grasper:
         poses = []
         confidences = []
         durations = []
+        current_score = -1
         for detection in detections:
             # reject based on detection score
             if detection.score < th_detection:
@@ -142,21 +143,15 @@ class Grasper:
                 continue
 
             # estimate a set of candidate poses
-            print("requesting pose estimate...")
+            print("requesting pose estimate and refine step...")
             st = time.time()
             instance_poses = estimate(self.rgb, self.depth, detection)
-            print("   received pose.")
-            #instance_poses = [pose for pose in instance_poses if pose.confidence > th_estimation]
-            #if len(instance_poses) == 0:
-            #    print("all poses for %s rejected after estimation" % detection.name)
-            #    continue
-            # assert len(instance_poses) == 5  # TODO
-            # for instance_pose in instance_poses:
-            #   self.vis_pose(instance_poses, "_estimated")
-
-            # refine candidate poses
-            #print("requesting pose refinement...")
-            #instance_poses = refine(self.rgb, self.depth, detection, instance_poses)
+      
+            if detection.score > current_score:
+                self.observation_mask = np.zeros((self.rgb.height * self.rgb.width), dtype=np.uint8)
+                self.observation_mask[np.array(detection.mask)] = 1
+                current_score = detection.score
+                
             duration = time.time() - st
             print("   received refined poses.")
             if instance_poses is None or len(instance_poses) == 0:
@@ -176,6 +171,8 @@ class Grasper:
             else:
                 print("all poses of %s rejected" % detection.name)
         assert len(poses) == len(confidences)
+
+        self.observation_mask = self.observation_mask.reshape((self.rgb.height, self.rgb.width))
 
         # === to numpy and store
         if not os.path.exists("/task/lm"):
@@ -339,11 +336,13 @@ class Grasper:
 
     def vis_pose(self, poses):
         rgb = ros_numpy.numpify(self.rgb)
-        camera_info = rospy.wait_for_message(CAMERA_INFO, CameraInfo, timeout=10)
-        intrinsics = np.array(camera_info.K).reshape(3, 3)
-        
+        depth = ros_numpy.numpify(self.depth) / 1000.
+        #camera_info = rospy.wait_for_message(CAMERA_INFO, CameraInfo, timeout=10)
+        #intrinsics = np.array(camera_info.K).reshape(3, 3)
+
+        plane = self.plane_detector.detect(depth, self.observation_mask)
+
         obj_ids = []
-        obj_trafos = []
         for pose in poses:
            name = pose.name
            obj_id = -1
@@ -354,46 +353,88 @@ class Grasper:
            assert obj_id > 0  # should start from 1
            obj_ids.append(obj_id)
 
-        #obj_ids = [obj_id]  # TODO expand to a list of poses
-           T_obj = np.matrix(np.eye(4))
-           T_obj[:3, :3] = scit.Rotation.from_quat(ros_numpy.numpify(pose.pose.orientation)).as_dcm()
-           T_obj[:3, 3] = ros_numpy.numpify(pose.pose.position).reshape(3, 1)
-           obj_trafos.append(T_obj)
+        try:
+            plane = self.plane_detector.detect(depth, self.observation_mask)
+        except:
+            print("no plane found for visualization")
 
-        #obj_trafos = [T_obj]
-        rendered = self.renderer.render(obj_ids, obj_trafos,
-                                        np.matrix(np.eye(4)), intrinsics)#,
-                                        #mode='color+depth+seg')
+        trans = []
 
-        vis_pose = np.float32(rgb.copy()) / 255
-        highlight = np.float32(rendered[0]) / 255
-        class_ids = np.unique(rendered[2])
-        for class_id in class_ids:
-            if class_id == 0:
-                continue
+        if plane is not None:
+        # visualize best hypothesis per object
+            vis = rgb.copy()
+            colors = cm.get_cmap('tab10')
+            obj_ids_mod = (np.asarray(obj_ids)) - 1
+            for pose in poses:
+                matrix = np.identity(4)
+                r = R.from_quat([pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z, pose.pose.orientation.w])
+                matrix[:3, :3] = r.as_dcm()
+                matrix[:3, 3] = [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z]
+                trans.append(matrix)
+            print([obj_ids_mod[0]])
+            print([trans[0]])
+            est_depth, _ = self.renderer.render([obj_ids_mod[0]], [trans[0]],
+                                            plane, self.intrinsics)
+            contour, _ = cv2.findContours(np.uint8(est_depth > 0), cv2.RETR_CCOMP,
+                                            cv2.CHAIN_APPROX_TC89_L1)
+            color = tuple([int(c * 255) for c in colors(obj_ids)])
+            vis = cv2.drawContours(vis, contour, -1, color, 2, lineType=cv2.LINE_AA)
 
-            mask = rendered[2] == class_id
-            vis_pose[mask] = highlight[mask] * 0.7 + vis_pose[mask] * 0.3
+            vis = Img.fromarray(vis)
+            self.pub_refined.publish(ros_numpy.msgify(Image, np.asarray(vis), encoding="rgb8"))
+        
+#         obj_ids = []
+#         obj_trafos = []
+#         for pose in poses:
+#            name = pose.name
+#            obj_id = -1
+#            for idx, obj_name in self.dataset.obj_names.items():
+#                if obj_name == name:
+#                    obj_id = int(idx)
+#                    break
+#            assert obj_id > 0  # should start from 1
+#            obj_ids.append(obj_id)
 
-            _, contour, _ = cv2.findContours(np.uint8(mask), cv2.RETR_CCOMP,
-                                             cv2.CHAIN_APPROX_TC89_L1)
-            vis_pose = cv2.drawContours(vis_pose, contour, -1, (0, 1, 0), 1, lineType=cv2.LINE_AA)
+#         #obj_ids = [obj_id]  # TODO expand to a list of poses
+#            T_obj = np.matrix(np.eye(4))
+#            T_obj[:3, :3] = scit.Rotation.from_quat(ros_numpy.numpify(pose.pose.orientation)).as_dcm()
+#            T_obj[:3, 3] = ros_numpy.numpify(pose.pose.position).reshape(3, 1)
+#            obj_trafos.append(T_obj)
 
-        vis_pose = np.uint8(vis_pose * 255)
+#         #obj_trafos = [T_obj]
+#         rendered = self.renderer.render(obj_ids, obj_trafos,
+#                                         np.matrix(np.eye(4)), intrinsics)#,
+#                                         #mode='color+depth+seg')
 
-#        import matplotlib.pyplot as plt
+#         vis_pose = np.float32(rgb.copy()) / 255
+#         highlight = np.float32(rendered[0]) / 255
+#         class_ids = np.unique(rendered[2])
+#         for class_id in class_ids:
+#             if class_id == 0:
+#                 continue
 
-#        plt.subplot(1, 3, 1)
-#        plt.imshow(rgb)
-#        plt.subplot(1, 3, 2)
-#        plt.imshow(rendered[0])
-#        plt.subplot(1, 3, 3)
-#        plt.imshow(vis_pose)
-#        plt.show()
-        # TODO visualize detected plane
+#             mask = rendered[2] == class_id
+#             vis_pose[mask] = highlight[mask] * 0.7 + vis_pose[mask] * 0.3
 
-        ros_vis_initial = ros_numpy.msgify(Image, vis_pose, encoding="rgb8")
-        self.pub_refined.publish(ros_vis_initial)
+#             _, contour, _ = cv2.findContours(np.uint8(mask), cv2.RETR_CCOMP,
+#                                              cv2.CHAIN_APPROX_TC89_L1)
+#             vis_pose = cv2.drawContours(vis_pose, contour, -1, (0, 1, 0), 1, lineType=cv2.LINE_AA)
+
+#         vis_pose = np.uint8(vis_pose * 255)
+
+# #        import matplotlib.pyplot as plt
+
+# #        plt.subplot(1, 3, 1)
+# #        plt.imshow(rgb)
+# #        plt.subplot(1, 3, 2)
+# #        plt.imshow(rendered[0])
+# #        plt.subplot(1, 3, 3)
+# #        plt.imshow(vis_pose)
+# #        plt.show()
+#         # TODO visualize detected plane
+
+#         ros_vis_initial = ros_numpy.msgify(Image, vis_pose, encoding="rgb8")
+        #self.pub_refined.publish(ros_vis_initial)
 
     def tf_pose(self, pose, suffix):
         self.pub_poses.sendTransform([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z], [pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z, pose.pose.orientation.w], rospy.Time.now(), pose.name + suffix,

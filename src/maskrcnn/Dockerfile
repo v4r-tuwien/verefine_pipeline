@@ -57,7 +57,7 @@ RUN /bin/bash -c '. /opt/ros/kinetic/setup.bash; cd /maskrcnn/catkin_ws; catkin 
 # ----------------
 
 # smh get errors otherwise
-RUN pip3 install --upgrade wheel setuptools==51.0.0 pip==20.3.4
+RUN pip3 install --upgrade wheel==0.34.0 setuptools==51.0.0 pip==20.3.4
 
 
 # clone and build Mask R-CNN (note: replace tensorflow with tensorflow-gpu)

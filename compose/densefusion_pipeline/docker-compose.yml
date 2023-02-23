@@ -26,6 +26,9 @@ services:
   estimate_refine:
     image: "verefine"
     network_mode: "host"
+    build: 
+      context: ../../
+      dockerfile: src/verefine/Dockerfile
     runtime: "nvidia"
     volumes:
       - ../../:/hsr-grasping
@@ -55,6 +58,9 @@ services:
   grasp:
     image: "hsr-grasping"
     network_mode: "host"
+    build: 
+      context: ../../
+      dockerfile: src/task/Dockerfile
     runtime: "nvidia"
     volumes:
     - ../../lm:/task/lm

@@ -78,9 +78,9 @@ class PlaneDetector:
 
         # t: move -d in direction of n
         t = -n * coefficients[3]
-        centroid_in_plane = (R @ (points-t).T).T.mean(axis=0)
+        centroid_in_plane = np.matmul(R, (points-t).T).T.mean(axis=0)
         centroid_in_plane[2] = 0  # only xy
-        t += R @ centroid_in_plane
+        t += np.matmul(R, centroid_in_plane)
 
         # compose final matrix
         T = np.eye(4, 4)

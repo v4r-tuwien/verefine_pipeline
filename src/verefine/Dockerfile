@@ -55,6 +55,7 @@ COPY src/verefine/requirements.txt /verefine/
 RUN pip3 install --upgrade pip
 RUN pip3 install setuptools wheel numpy cython scikit-build
 RUN pip3 install -r requirements.txt
+RUN pip3 install --upgrade sklearn open3d
 
 # clone DenseFusion
 WORKDIR /verefine/3rdparty/verefine/3rdparty
