@@ -5,76 +5,74 @@ services:
     image: "maskrcnn"
     network_mode: "host"
     runtime: "nvidia"
-    # user: root
-
+    build: 
+      context: ../../
+      dockerfile: src/maskrcnn/Dockerfile
+    volumes:
+      - ../../:/hsr-grasping
+      #- ../../src:/maskrcnn/src
     extra_hosts:
       - "hsrb:10.0.0.143"
-
     environment:
       # ROS_MASTER_URI:     # empty value means use same as host
       ROS_MASTER_URI: "http://hsrb:11311"
-
+    
     command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
-
-  estimate:
-    image: "ppf_recognizer"
-    network_mode: "host"
-    volumes:
-      - ../../data/ycbv_ppf_models:/home/v4r/models
-    environment:
-      ROS_MASTER_URI: "http://hsrb:11311"
-      
-    extra_hosts:
-      - "hsrb:10.0.0.143"
-
-    command: bash -c "source /home/v4r/catkin_ws/devel/setup.bash; roslaunch ppf_recognizer_ros hsr_ppf_pipeline.launch"
-
     stdin_open: true
     tty: true
 
-  # refine:
-  #   image: "icp"
-  #   network_mode: "host"
-  #   environment:
-  #     ROS_MASTER_URI:
+  # run seperate densefusion containers for estimation and refinement or run both in the same container ?
 
-  #   command: bash -c "ROS_NAMESPACE=hsr_grasping python /path/to/icp/refine/.py"
-
-  #   stdin_open: true
-  #   tty: true
-
-  refine:
-    image: "densefusion"
+  estimate_refine_ppf:
+    image: "ppf"
     network_mode: "host"
+    build: 
+      context: ../../
+      dockerfile: src/ppf/Dockerfile
     runtime: "nvidia"
     volumes:
       - ../../:/hsr-grasping
-    environment:
-      ROS_MASTER_URI: "http://hsrb:11311"
-      # DISPLAY:
-      # QT_X11_NO_MITSHM: 1
+      #- /tmp/.X11-unix:/tmp/.X11-unix:rw
     extra_hosts:
       - "hsrb:10.0.0.143"
-    
-    entrypoint: ""
-    command: bash -c "source /densefusion/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /densefusion/src/densefusion/ros_pose_refinement.py"
+    environment:
+      ROS_MASTER_URI: "http://hsrb:11311"
+      #Xvfb: 99 -screen 0 1920x1080x24
+      #DISPLAY: ${DISPLAY}
+      #QT_X11_NO_MITSHM: 1     
+      ROS_IP: "10.0.0.206"
 
+  #   # adds hostnames to the containers /etc/hosts
+  #   # extra_hosts:
+  #   #   - "hsrb:10.0.0.143"
+
+    entrypoint: ""
+    command: bash -c "source /ppf/catkin_ws/devel/setup.bash; 
+                      export PYTHONPATH=/ppf/catkin_ws/devel/lib/python3/dist-packages:$$PYTHONPATH; 
+                      rosparam load -v /ppf/config/params.yaml /locateobject;
+                      ROS_NAMESPACE=hsr_grasping python3 /ppf/src/locate_object/ros_locate_object.py"
     stdin_open: true
     tty: true
 
   grasp:
     image: "hsr-grasping"
     network_mode: "host"
+    build: 
+      context: ../../
+      dockerfile: src/task/Dockerfile
     runtime: "nvidia"
+    volumes:
+    - ../../lm:/task/lm
+    extra_hosts:
+      - "hsrb:10.0.0.143"
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
-      # DISPLAY:
-      # QT_X11_NO_MITSHM: 1
-      
-    extra_hosts:
-       - "hsrb:10.0.0.143"
+      ROS_IP: "10.0.0.206"
+      DISPLAY: ${DISPLAY}
+      Xvfb: 99 -screen 0 1920x1080x24
+      QT_X11_NO_MITSHM: 1 
 
-    command: bash -c "source /task/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /task/src/task/ros_grasp_object.py"
+    command: bash -c "source /task/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /task/src/ros_grasp_object.py"
 
     stdin_open: true
     tty: true

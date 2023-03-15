@@ -28,6 +28,7 @@ ENV NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all
 # --- ROS
 ENV ROS_DISTRO melodic
 # use Python3 with ROS (hack from https://medium.com/@beta_b0t/how-to-setup-ros-with-python-3-44a69ca36674)
+RUN pip3 install --upgrade setuptools
 RUN pip3 install rospkg catkin_pkg
 # install ros_numpy
 WORKDIR /verefine/3rdparty
