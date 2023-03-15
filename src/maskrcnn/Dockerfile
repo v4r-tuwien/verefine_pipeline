@@ -94,6 +94,9 @@ WORKDIR /maskrcnn/data
 RUN mkdir -p /verefine/data
 RUN cp -r /maskrcnn/data/* /verefine/data/
 
+RUN mkdir -p /config
+COPY ./config /config
+
 # entry point
 WORKDIR /maskrcnn
 COPY ./src/maskrcnn/ros_entrypoint.sh /

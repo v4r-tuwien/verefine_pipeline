@@ -118,6 +118,9 @@ RUN pip install tinyobjloader==2.0.0rc7
 RUN mkdir -p /verefine/data
 COPY ./data /verefine/data
 
+RUN mkdir -p /config
+COPY ./config /config
+
 # entry point
 COPY ./src/task/ros_entrypoint.sh /
 RUN chmod +x /ros_entrypoint.sh

@@ -17,7 +17,9 @@ services:
       # ROS_MASTER_URI:     # empty value means use same as host
       ROS_MASTER_URI: "http://hsrb:11311"
     
-    command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
+    command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; 
+                      rosparam load  /config/params.yaml /hsr_grasping;
+                      ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
     stdin_open: true
     tty: true
 
@@ -50,6 +52,7 @@ services:
     command: bash -c "source /ppf/catkin_ws/devel/setup.bash; 
                       export PYTHONPATH=/ppf/catkin_ws/devel/lib/python3/dist-packages:$$PYTHONPATH; 
                       rosparam load -v /ppf/config/params.yaml /locateobject;
+                      rosparam load  /config/params.yaml /hsr_grasping;
                       ROS_NAMESPACE=hsr_grasping python3 /ppf/src/locate_object/ros_locate_object.py"
     stdin_open: true
     tty: true
@@ -72,7 +75,9 @@ services:
       Xvfb: 99 -screen 0 1920x1080x24
       QT_X11_NO_MITSHM: 1 
 
-    command: bash -c "source /task/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python /task/src/ros_grasp_object.py"
+    command: bash -c "source /task/catkin_ws/devel/setup.bash; 
+                      rosparam load  /config/params.yaml /hsr_grasping;
+                      ROS_NAMESPACE=hsr_grasping python /task/src/ros_grasp_object.py"
 
     stdin_open: true
     tty: true

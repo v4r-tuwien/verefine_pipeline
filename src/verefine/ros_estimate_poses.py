@@ -40,6 +40,7 @@ from util.plane_detector import PlaneDetector
 from util.dataset import YcbvDataset
 from densefusion.densefusion import DenseFusion  # includes estimator and refiner
 
+
 CAMERA_INFO = "/hsrb/head_rgbd_sensor/rgb/camera_info"
 ESTIMATE_MODE = 3
 
@@ -48,12 +49,10 @@ if __name__ == "__main__":
     publisher = rospy.Publisher("/verefine/estimated_poses", Image, queue_size=1)
     # VeREFINE utilities
     dataset = YcbvDataset()
-    width, height, intrinsics = dataset.width, dataset.height, dataset.camera_intrinsics
-    #camera_info = rospy.wait_for_message(CAMERA_INFO, CameraInfo, timeout=100)
-    #intrinsics = np.array(camera_info.K).reshape(3, 3)
-    intrinsics = np.array([538.391033533567, 0.0, 315.3074696331638,
-                           0.0, 538.085452058436, 233.0483557773859,
-                           0.0, 0.0, 1.0]).reshape(3, 3)
+    width = rospy.get_param('/hsr_grasping/im_width')
+    height = rospy.get_param('/hsr_grasping/im_height')
+    intrinsics = np.asarray(rospy.get_param('/hsr_grasping/intrinsics'))
+    ycbv_names_json = rospy.get_param('/hsr_grasping/ycbv_names')
     simulator, renderer = Simulator(dataset), Renderer(dataset, width, height)
     plane_detector = PlaneDetector(width, height, intrinsics, down_scale=1)
     
@@ -89,7 +88,7 @@ if __name__ == "__main__":
         # find id to name
         ycbv_names = None
         try:
-            f = open("/verefine/data/ycbv_names.json")
+            f = open(ycbv_names_json)
             ycbv_names = json.load(f)
             f.close()
         except:

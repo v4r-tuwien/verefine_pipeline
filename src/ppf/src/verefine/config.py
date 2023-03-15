@@ -3,7 +3,7 @@
 # TU Wien, Vienna
 
 # VEREFINE
-HYPOTHESES_PER_OBJECT = 6  # double of PPF to account for flipped hypotheses
+HYPOTHESES_PER_OBJECT = 3  # double of PPF to account for flipped hypotheses
 REFINEMENT_ITERATIONS = 2
 SIMULATION_STEPS = 3
 MODE = 3

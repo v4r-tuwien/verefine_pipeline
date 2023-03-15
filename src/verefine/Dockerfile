@@ -72,6 +72,9 @@ COPY data/densefusion_* /verefine/data/
 COPY data/models /verefine/data/models
 COPY data/ycbv_* /verefine/data/
 
+RUN mkdir -p /config
+COPY ./config /config
+
 # --- ROS
 # entry point
 WORKDIR /verefine

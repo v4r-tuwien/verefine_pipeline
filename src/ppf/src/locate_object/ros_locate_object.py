@@ -112,6 +112,80 @@ class LocateObject:
         #self.depth_topic = rospy.get_param('/locateobject/depth_topic')
         #self.camera_info_topic = rospy.get_param('/locateobject/camera_info_topic')
 
+                # dataset infos
+        cfg_dir = rospy.get_param('/hsr_grasping/cfg_dir')
+        models_dir = rospy.get_param('/hsr_grasping/models_dir')
+        #self.object_models = ["Canister", "DrainTray"]  # empty: use all models
+        
+        #object_to_m = [1, 1e-3]
+        #object_to_mm = [scale * 1e3 for scale in object_to_m]
+
+        dataset = YcbvDataset()        
+        self.im_width = rospy.get_param('/hsr_grasping/im_width')
+        self.im_height = rospy.get_param('/hsr_grasping/im_height')
+        self.im_K = np.asarray(rospy.get_param('/hsr_grasping/intrinsics'))
+        self.ycbv_names_json = rospy.get_param('/hsr_grasping/ycbv_names')
+        self.ycbv_verefine= rospy.get_param('/hsr_grasping/ycbv_verefine')
+        meta_vf = json.load(open(self.ycbv_verefine, 'r'))
+        self.obj_meta = meta_vf['objects']
+        self.obj_ids = list(self.obj_meta.keys())
+        object_to_m = np.ones(len(self.obj_ids))
+        object_to_mm = [scale * 1e3 for scale in object_to_m]
+        names = [self.obj_meta[id]['name'] for id in self.obj_meta.keys()]
+        self.object_models = names 
+
+        # get meshes and point clouds (sampled from mesh)
+        if self.use_refinement or self.use_verification:
+            # TODO create centered models of same dimension
+
+            mesh_paths = [f"{models_dir}/{obj_model}.stl" for obj_model in self.object_models]
+            cloud_paths = [f"{models_dir}/{obj_model}/3D_model.pcd"  for obj_model in self.object_models]
+            meshes = dataset.meshes
+            self.meshes_sampled = []
+            for mesh, to_m, cloud_path in zip(meshes, object_to_m, cloud_paths):
+                if os.path.exists(cloud_path):
+                    pcd = o3d.io.read_point_cloud(cloud_path)
+                else:
+                    # Create the folder that will contain the generated point cloud
+                    make_dir(os.path.abspath(os.path.join(cloud_path, os.pardir)))
+
+                    # Generate the point cloud
+                    points, face_indices = trimesh.sample.sample_surface_even(mesh, 4096)
+                    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points * to_m))
+                    pcd.normals = o3d.utility.Vector3dVector(mesh.face_normals[face_indices])
+                    o3d.io.write_point_cloud(cloud_path, pcd)
+                self.meshes_sampled.append(pcd)
+            meshes = [mesh.apply_scale(to_mm) for mesh, to_mm in zip(meshes, object_to_mm)]  # for renderer
+
+        # create plane detector and PPF
+        # pd_roi_data = yaml.load(open("/canister/src/locate_object/plane_detector_roi.yml", 'r'), Loader=yaml.FullLoader)
+        if rospy.get_param('/locateobject/use_roi'):
+            roi_center = np.array(rospy.get_param('/locateobject/roi_center'))
+            roi_rotation = np.array(rospy.get_param('/locateobject/roi_rotation')).reshape((3, 3))
+            roi_extent = np.array(rospy.get_param('/locateobject/roi_extent'))
+            roi_bbox = o3d.geometry.OrientedBoundingBox(roi_center, roi_rotation, roi_extent)
+        else:
+            roi_bbox = None
+
+        pd_to_meters = rospy.get_param('/locateobject/to_meters', 1e-3)
+        distance_threshold = rospy.get_param('/locateobject/distance_threshold', 0.01)
+
+        self.detector = PlaneDetector(self.im_width, self.im_height, self.im_K,
+                                      self.down_scale, roi_bbox=roi_bbox,
+                                      to_meters=pd_to_meters, distance_threshold=distance_threshold)
+        
+        self.ppf = PPF(cfg_dir, models_dir, self.object_models)
+
+        # prepare renderer for verification
+        if self.use_verification:
+            self.renderer = Renderer(meshes, self.im_width, self.im_height)
+
+        # prepare verefine
+        if self.use_verefine:
+            # TODO create colliders from decomposition, get CoM (or center at CoM)
+            self.simulator = Simulator(self.object_models, mesh_paths,
+                                       [[0, 0, 0]]*len(mesh_paths), object_to_m)
+            self.verefine = Verefine(self.object_models, self.meshes_sampled, refiner, self.simulator, self.renderer)
         #sub_rgb, sub_depth = message_filters.Subscriber(self.color_topic, Image),\
         #                     message_filters.Subscriber(self.depth_topic, Image)
         #sub_rgbd = message_filters.ApproximateTimeSynchronizer([sub_rgb, sub_depth], 10, self.slop)
@@ -166,92 +240,7 @@ class LocateObject:
 
         self.rgb = goal.rgb
         self.depth = goal.depth
-        self.name = goal.det.name
 
-        # dataset infos
-        cfg_dir = "/verefine/data"
-        models_dir = "/verefine/data/models/renderer"
-        #self.object_models = ["Canister", "DrainTray"]  # empty: use all models
-        self.object_models = [self.name]  # empty: use all models
-        #object_to_m = [1, 1e-3]
-        #object_to_mm = [scale * 1e3 for scale in object_to_m]
-
-        dataset = YcbvDataset()
-        self.im_width, self.im_height, intrinsics = dataset.width, dataset.height, dataset.camera_intrinsics
-        self.im_K = np.array([538.391033533567, 0.0, 315.3074696331638,
-                           0.0, 538.085452058436, 233.0483557773859,
-                           0.0, 0.0, 1.0]).reshape(3, 3)
-        meta_vf = json.load(open("/verefine/data/ycbv_verefine.json", 'r'))
-        self.obj_meta = meta_vf['objects']
-        self.obj_ids = list(self.obj_meta.keys())
-        object_to_m = [1]
-        object_to_mm = [scale * 1e3 for scale in object_to_m]
-        names = [self.obj_meta[id]['name'] for id in self.obj_meta.keys()]
-        #cloud_paths = ["/verefine/data/models/render/obj_{id:06}.ply".format(id = int(obj_id))
-        #               for obj_id in self.obj_ids]
-        #mesh_paths = ["/verefine/data/models/render/obj_{id:06}.ply".format(id = int(obj_id))
-        #               for obj_id in self.obj_ids]
-
-
-        # get meshes and point clouds (sampled from mesh)
-        if self.use_refinement or self.use_verification:
-            # TODO create centered models of same dimension
-
-            mesh_paths = [f"/verefine/data/models/renderer/{self.object_models[0]}.stl"]
-            cloud_paths = [f"/verefine/data/models/renderer/{self.object_models[0]}/3D_model.pcd"]
-            #meshes = [trimesh.load(path) for path in mesh_paths]
-            #cloud_paths = dataset.collider_paths
-            meshes = [dataset.meshes[names.index(self.object_models[0])]]
-            self.meshes_sampled = []
-            for mesh, to_m, cloud_path in zip(meshes, object_to_m, cloud_paths):
-                if os.path.exists(cloud_path):
-                    pcd = o3d.io.read_point_cloud(cloud_path)
-                else:
-                    # Create the folder that will contain the generated point cloud
-                    make_dir(os.path.abspath(os.path.join(cloud_path, os.pardir)))
-
-                    # Generate the point cloud
-                    points, face_indices = trimesh.sample.sample_surface_even(mesh, 4096)
-                    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points * to_m))
-                    pcd.normals = o3d.utility.Vector3dVector(mesh.face_normals[face_indices])
-                    o3d.io.write_point_cloud(cloud_path, pcd)
-                self.meshes_sampled.append(pcd)
-            meshes = [mesh.apply_scale(to_mm) for mesh, to_mm in zip(meshes, object_to_mm)]  # for renderer
-
-        # create plane detector and PPF
-        # pd_roi_data = yaml.load(open("/canister/src/locate_object/plane_detector_roi.yml", 'r'), Loader=yaml.FullLoader)
-        if rospy.get_param('/locateobject/use_roi'):
-            roi_center = np.array(rospy.get_param('/locateobject/roi_center'))
-            roi_rotation = np.array(rospy.get_param('/locateobject/roi_rotation')).reshape((3, 3))
-            roi_extent = np.array(rospy.get_param('/locateobject/roi_extent'))
-            roi_bbox = o3d.geometry.OrientedBoundingBox(roi_center, roi_rotation, roi_extent)
-        else:
-            roi_bbox = None
-
-        pd_to_meters = rospy.get_param('/locateobject/to_meters', 1e-3)
-        distance_threshold = rospy.get_param('/locateobject/distance_threshold', 0.01)
-
-        self.detector = None
-        self.detector = PlaneDetector(self.im_width, self.im_height, self.im_K,
-                                      self.down_scale, roi_bbox=roi_bbox,
-                                      to_meters=pd_to_meters, distance_threshold=distance_threshold)
-        self.ppf = None
-        self.ppf = PPF(cfg_dir, models_dir, self.object_models)
-
-        # prepare renderer for verification
-        if self.use_verification:
-            self.renderer = Renderer(meshes, self.im_width, self.im_height)
-
-        if self.simulator is not None:
-            self.simulator.deinitialize()
-        self.verefine = None
-
-        # prepare verefine
-        if self.use_verefine:
-            # TODO create colliders from decomposition, get CoM (or center at CoM)
-            self.simulator = Simulator(self.object_models, mesh_paths,
-                                       [[0, 0, 0]], object_to_m)
-            self.verefine = Verefine(self.object_models, self.meshes_sampled, refiner, self.simulator, self.renderer)
 
         # create server
         #self._server = SimpleActionServer(name, LocateObjectAction, execute_cb=self.execute_cb, auto_start=False)
@@ -267,8 +256,8 @@ class LocateObject:
         else:
             # == get images and objects to search
             rgb, depth = ros_numpy.numpify(self.rgb), ros_numpy.numpify(self.depth)
-            #obj_models_to_search = [goal.object_to_locate] if goal.object_to_locate != "" else []
-            obj_models_to_search = []
+            obj_models_to_search = [goal.det.name] if goal.det.name != "" else []
+
             if self.use_verification:
                 # -- compute normal image
                 D_px = depth.copy()
@@ -320,20 +309,6 @@ class LocateObject:
             # note: generates at most PPFRecognitionPipelineParameter.correspondences_per_scene_point_ per object (defaults to 3)
             # note: returns at most PPFRecognitionPipelineParameter.max_hypotheses_ per object (defaults to 3)
             objects_hypotheses = self.ppf.estimate(points_array=scene_points, obj_models_to_search=obj_models_to_search)
-
-            # Create flipped hypotheses for the canister
-            flip_rot = np.array([[1., 0., 0.], [0., -1., 0.], [0., 0., -1.]])
-            for oi, object_hypotheses in enumerate(objects_hypotheses):
-                combined_hypotheses = [oh for oh in object_hypotheses]
-                for hi, object_hypothesis in enumerate(object_hypotheses):
-                    new_hypothesis = ObjectHypothesis()
-                    new_hypothesis.model_id = object_hypothesis.model_id
-                    new_pose = copy.copy(object_hypothesis.transform)
-                    new_pose[:3, :3] = np.dot(object_hypothesis.transform[:3, :3], flip_rot)
-                    new_hypothesis.transform = new_pose
-                    new_hypothesis.confidence = object_hypothesis.confidence
-                    combined_hypotheses.append(new_hypothesis)
-                objects_hypotheses[oi] = combined_hypotheses
 
             if self.use_refinement and not self.use_verefine:
                 # == refine all poses using ICP
@@ -460,6 +435,8 @@ class LocateObject:
                         obj_idx = self.object_models.index(object_hypothesis.model_id)
                         score, f_d, f_n = self.renderer.compute_score([obj_idx], [object_hypothesis.transform],
                                                                       np.eye(4), self.im_K, return_map=True)
+                        print(f_d)
+                        print(f_n)
                         # visualization
                         vis = rgb.copy()
                         D_ren, N_ren = self.renderer.render([obj_idx], [object_hypothesis.transform],
@@ -520,7 +497,11 @@ class LocateObject:
             for index, pose in enumerate(object_poses):
                 poseWithConfidence = PoseWithConfidence()
                 poseWithConfidence.name = object_types[index]
-                poseWithConfidence.confidence = confidences[index]
+                # for score compare with densefusion estimator
+                if confidences[index] * 35 <= 1:
+                    poseWithConfidence.confidence = confidences[index] * 35
+                else:
+                    poseWithConfidence.confidence = 1
                 poseWithConfidence.pose = pose
                 result.poses.append(poseWithConfidence)
 

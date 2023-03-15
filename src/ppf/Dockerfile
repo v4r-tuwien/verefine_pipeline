@@ -107,6 +107,9 @@ RUN mkdir -p /verefine/data
 COPY ./data /verefine/data
 COPY ./src/verefine/util /ppf/src/locate_object/util
 
+RUN mkdir -p /config
+COPY ./config /config
+
 # --- CLEANUP
 # RUN rm -rf /var/lib/apt/lists/*
 
