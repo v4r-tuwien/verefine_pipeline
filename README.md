@@ -58,26 +58,50 @@ They are published as images to these topics:
 - ```/verefine/estimated_poses``` (densefusion)
 - ```/ppf_estimation_and_verefine_refinement/verefine_debug``` (ppf)
  
-## Service 
-The pipeline will advertise a service ```/hsr_grasping/get_poses``` of the type [get_poses.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/get_poses.srv). The response represents the refined poses of the detected objects in the camera frame.
+## Service and Action Server
+The pipeline will advertise a action server ```/hsr_grasping/find_grasppose``` of the type [GenericImgProcAnnotator.action](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/action/GenericImgProcAnnotator.action). The response represents the refined poses of the detected objects in the camera frame.
 
 The services that are internally called are 
 - ```/hsr_grasping/detect_objects``` of the type [detectron2_service_server.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/detectron2_service_server.srv) 
 - ```/hsr_grasping/estimate_poses``` of the type [estimate_poses.srv](https://github.com/v4r-
 
-### Main Service
-#### get_poses.srv
+### Main Action
 ```
+#goal
+sensor_msgs/Image rgb
+sensor_msgs/Image depth
+string description
+
 ---
-PoseWithConfidence[] poses
-```
-### Internal Services
-#### detectron2_service_server.srv
-```
+#result
+bool success
+string result_feedback
+
+# A list of bounding boxes for all detected objects
+sensor_msgs/RegionOfInterest[] bounding_boxes
+
+# Class IDs for each entry in bounding_boxes
+int32[] class_ids
+
+# Class confidence for each entry in bounding_boxes
+float32[] class_confidences
+
+# An image that can be used to send preprocessed intermediate results,
+# inferred segmentation masks or maybe even a result image, depending on the use case
 sensor_msgs/Image image
+
+# The best pose for each entry in bounding_boxes
+geometry_msgs/Pose[] pose_results
+
+# Array-based string feedback when generating text for all detected objects etc.
+string[] descriptions
+
 ---
-object_detector_msgs/Detections detections
+#feedback
+string feedback
 ```
+
+### Main Service
 
 #### estimate_poses.srv
 ```
