@@ -10,7 +10,6 @@ services:
       dockerfile: src/maskrcnn/Dockerfile
     volumes:
       - ../../:/hsr-grasping
-      #- ../../src:/maskrcnn/src
     extra_hosts:
       - "hsrb:10.0.0.143"
     environment:
@@ -33,20 +32,12 @@ services:
       dockerfile: src/ppf/Dockerfile
     runtime: "nvidia"
     volumes:
-      - ../../:/hsr-grasping
-      #- /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ../../data:/verefine/data
     extra_hosts:
       - "hsrb:10.0.0.143"
     environment:
-      ROS_MASTER_URI: "http://hsrb:11311"
-      #Xvfb: 99 -screen 0 1920x1080x24
-      #DISPLAY: ${DISPLAY}
-      #QT_X11_NO_MITSHM: 1     
+      ROS_MASTER_URI: "http://hsrb:11311"   
       ROS_IP: "10.0.0.206"
-
-  #   # adds hostnames to the containers /etc/hosts
-  #   # extra_hosts:
-  #   #   - "hsrb:10.0.0.143"
 
     entrypoint: ""
     command: bash -c "source /ppf/catkin_ws/devel/setup.bash; 
