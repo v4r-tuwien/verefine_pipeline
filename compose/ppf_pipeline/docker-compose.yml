@@ -1,6 +1,8 @@
 version: '2.4'
 services:
 
+  # run object detection
+
   detect:
     image: "maskrcnn"
     network_mode: "host"
@@ -8,13 +10,11 @@ services:
     build: 
       context: ../../
       dockerfile: src/maskrcnn/Dockerfile
-    volumes:
-      - ../../:/hsr-grasping
     extra_hosts:
       - "hsrb:10.0.0.143"
     environment:
-      # ROS_MASTER_URI:     # empty value means use same as host
       ROS_MASTER_URI: "http://hsrb:11311"
+      ROS_IP: "10.0.0.206"
     
     command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; 
                       rosparam load  /config/params.yaml /hsr_grasping;
@@ -24,8 +24,8 @@ services:
 
   # run seperate densefusion containers for estimation and refinement or run both in the same container ?
 
-  estimate_refine_ppf:
-    image: "ppf"
+  estimate_refine:
+    image: "ppf_verefine"
     network_mode: "host"
     build: 
       context: ../../
@@ -48,15 +48,13 @@ services:
     stdin_open: true
     tty: true
 
-  grasp:
-    image: "hsr-grasping"
+  pose:
+    image: "pose_estimator"
     network_mode: "host"
     build: 
       context: ../../
       dockerfile: src/task/Dockerfile
     runtime: "nvidia"
-    volumes:
-    - ../../lm:/task/lm
     extra_hosts:
       - "hsrb:10.0.0.143"
     environment:

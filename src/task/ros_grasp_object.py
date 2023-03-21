@@ -54,9 +54,9 @@ def estimate(rgb, depth, detection):
         print("Service call failed: %s" % e)
 
 
-RGB_TOPIC = rospy.get_param('/hsr_grasping/RGB_TOPIC')
-DEPTH_TOPIC = rospy.get_param('/hsr_grasping/DEPTH_TOPIC')
-CAMERA_INFO = rospy.get_param('/hsr_grasping/CAMERA_INFO')
+RGB_TOPIC = rospy.get_param('/pose_estimator/RGB_TOPIC')
+DEPTH_TOPIC = rospy.get_param('/pose_estimator/DEPTH_TOPIC')
+CAMERA_INFO = rospy.get_param('/pose_estimator/CAMERA_INFO')
 
 class GraspPoseEstimator:
 
@@ -250,10 +250,10 @@ class GraspPoseEstimator:
 
 
 if __name__ == "__main__":
-    rospy.init_node("grasp_pose_estimation_actionserver")
+    rospy.init_node("pose_estimation_actionserver")
 
     grasper = GraspPoseEstimator()
 
-    print("grasp_pose_estimation_actionserver test ready!")
+    print("pose_estimation_actionserver test ready!")
 
     rospy.spin()

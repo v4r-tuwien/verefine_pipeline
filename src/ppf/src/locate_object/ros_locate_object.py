@@ -103,7 +103,7 @@ class LocateObject:
         self.use_verefine = True and self.use_refinement and self.use_verification  # combines both
         self.debug_visualization = rospy.get_param('/locateobject/debug_visualization', True)  # visualize the process on an image topic
         if self.debug_visualization:
-            self.verefine_debub_img_pub = rospy.Publisher("/{}/verefine_debug".format(name), Image, queue_size=1)
+            self.verefine_debub_img_pub = rospy.Publisher("/pose_estimator/ppf_verefine_result", Image, queue_size=1)
 
         self.simulator = None
         # camera
@@ -113,19 +113,19 @@ class LocateObject:
         #self.camera_info_topic = rospy.get_param('/locateobject/camera_info_topic')
 
                 # dataset infos
-        cfg_dir = rospy.get_param('/hsr_grasping/cfg_dir')
-        models_dir = rospy.get_param('/hsr_grasping/models_dir')
+        cfg_dir = rospy.get_param('/pose_estimator/cfg_dir')
+        models_dir = rospy.get_param('/pose_estimator/models_dir')
         #self.object_models = ["Canister", "DrainTray"]  # empty: use all models
         
         #object_to_m = [1, 1e-3]
         #object_to_mm = [scale * 1e3 for scale in object_to_m]
 
         dataset = YcbvDataset()        
-        self.im_width = rospy.get_param('/hsr_grasping/im_width')
-        self.im_height = rospy.get_param('/hsr_grasping/im_height')
-        self.im_K = np.asarray(rospy.get_param('/hsr_grasping/intrinsics'))
-        self.ycbv_names_json = rospy.get_param('/hsr_grasping/ycbv_names')
-        self.ycbv_verefine= rospy.get_param('/hsr_grasping/ycbv_verefine')
+        self.im_width = rospy.get_param('/pose_estimator/im_width')
+        self.im_height = rospy.get_param('/pose_estimator/im_height')
+        self.im_K = np.asarray(rospy.get_param('/pose_estimator/intrinsics'))
+        self.ycbv_names_json = rospy.get_param('/pose_estimator/ycbv_names')
+        self.ycbv_verefine= rospy.get_param('/pose_estimator/ycbv_verefine')
         meta_vf = json.load(open(self.ycbv_verefine, 'r'))
         self.obj_meta = meta_vf['objects']
         self.obj_ids = list(self.obj_meta.keys())
