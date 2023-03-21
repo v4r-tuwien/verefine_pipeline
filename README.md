@@ -1,4 +1,4 @@
-# Verefine Pipeline
+# Pose estimation and refinement pipeline
 Pipeline for detecting objects and estimating and refining their pose. 
 
 The pipeline is implemented to use YCB-V objects and configured for the use on our Toyota HSR Sasha.
@@ -19,8 +19,8 @@ docker-compose up
 
 Three Docker containers will be started:
 - maskrcnn: [Mask-RCNN](https://github.com/matterport/Mask_RCNN) trained on YCB-V Dataset
-- verefine: Pose Estimation with [DenseFusion](https://github.com/j96w/DenseFusion) and refinement using [VeREFINE](https://github.com/dornik/verefine)
-- hsr-grasping: Node that calls detect, estimate_refine service and delivers object poses
+- densefusion_verefine: Pose Estimation with [DenseFusion](https://github.com/j96w/DenseFusion) and refinement using [VeREFINE](https://github.com/dornik/verefine)
+- pose_estimator: Node that calls detect, estimate_refine service and delivers object poses
 
 ppf + verefine:
 ```
@@ -32,8 +32,8 @@ docker-compose up
 
 Three Docker containers will be started:
 - maskrcnn: [Mask-RCNN](https://github.com/matterport/Mask_RCNN) trained on YCB-V Dataset
-- ppf: Pose Estimation with PPF and refinement using [VeREFINE](https://github.com/dornik/verefine)
-- hsr-grasping: Node that calls detect, estimate_refine service and delivers object poses
+- ppf_verefine: Pose Estimation with PPF and refinement using [VeREFINE](https://github.com/dornik/verefine)
+- pose_estimator: Node that calls detect, estimate_refine service and delivers object poses
 
 
 ## Build Dockerfile with global context
@@ -41,29 +41,29 @@ Three Docker containers will be started:
 maskrcnn:
 `docker build -t maskrcnn -f src/maskrcnn/Dockerfile .`
 
-hsr-grasping:
-`docker build -t hsr-grasping -f src/task/Dockerfile .`
+pose_estimator:
+`docker build -t pose_estimator -f src/task/Dockerfile .`
 
-verefine:
-`docker build -t verefine -f src/task/Dockerfile .`
+densefusion_verefine:
+`docker build -t densefusion_verefine -f src/verefine/Dockerfile .`
 
-ppf:
-`docker build -t verefine -f src/ppf/Dockerfile .`
+ppf_verefine:
+`docker build -t ppf_verefine -f src/ppf/Dockerfile .`
 
 
 ## Visualization
 In RVIZ you can view the final refined poses and the object segmentation by Mask-RCNN. 
 They are published as images to these topics:
-- ```/hsr_grasping/segmentation```
-- ```/verefine/estimated_poses``` (densefusion)
-- ```/ppf_estimation_and_verefine_refinement/verefine_debug``` (ppf)
+- ```/pose_estimator/segmentation```
+- ```/pose_estimator/estimated_poses``` (densefusion)
+- ```/pose_estimator/ppf_verefine_result``` (ppf)
  
 ## Service and Action Server
-The pipeline will advertise a action server ```/hsr_grasping/find_grasppose``` of the type [GenericImgProcAnnotator.action](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/action/GenericImgProcAnnotator.action). The response represents the refined poses of the detected objects in the camera frame.
+The pipeline will advertise a action server ```/pose_estimator/find_grasppose``` of the type [GenericImgProcAnnotator.action](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/action/GenericImgProcAnnotator.action). The response represents the refined poses of the detected objects in the camera frame.
 
 The services that are internally called are 
-- ```/hsr_grasping/detect_objects``` of the type [detectron2_service_server.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/detectron2_service_server.srv) 
-- ```/hsr_grasping/estimate_poses``` of the type [estimate_poses.srv](https://github.com/v4r-
+- ```/pose_estimator/detect_objects``` of the type [detectron2_service_server.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/detectron2_service_server.srv) 
+- ```/pose_estimator/estimate_poses``` of the type [estimate_poses.srv](https://github.com/v4r-
 
 ### Main Action
 ```
@@ -167,11 +167,12 @@ The ROS Master is set in the docker-compose.yml file for each container
 ```
 environment:
       ROS_MASTER_URI: "http://hsrb:11311"
+      ROS_IP: "10.0.0.206"
 ```
 ### ROS Namespace
 The Namespace is also defined in the docker-compose.yml file for each container. It is passed as command with the python script calls like this:
 ```
-command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
+command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; ROS_NAMESPACE=pose_estimator python3 /maskrcnn/src/maskrcnn/ros_detection.py"
 ```
 
 If you change it, the service names and visualization topics will change accordingly.
