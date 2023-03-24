@@ -18,6 +18,7 @@ import cv2
 import scipy.spatial.transform as scit
 from matplotlib import cm
 from PIL import Image as Img
+import matplotlib.pyplot as plt
 
 import message_filters
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
@@ -66,6 +67,7 @@ class GraspPoseEstimator:
         self.server.start()
         self.observation_mask = False
         self.current_poses = []
+        self.segmask_publisher = rospy.Publisher('/pose_estimator/segmentation', Image)
 
     # TODO implement preemt possibilty and feedbacks(after we done something update feedback)
     def find_grasppose(self, goal):
@@ -129,7 +131,9 @@ class GraspPoseEstimator:
         mask_detected_objects = np.ones((height * width), dtype=np.uint8)
         # -- Bounding Box -- & -- object segmentation mask -- & -- class ID --
         obj_mask = np.zeros((height * width), dtype=np.uint8)
-        for detection in detections:
+        seg_image = ros_numpy.numpify(goal.rgb).copy()
+        length = len(detections)
+        for idx, detection in enumerate(detections):
             result.bounding_boxes.append(RegionOfInterest(detection.bbox.xmin, detection.bbox.ymin, detection.bbox.ymax
                                                           - detection.bbox.ymin, detection.bbox.xmax
                                                           - detection.bbox.xmin, False))
@@ -139,6 +143,12 @@ class GraspPoseEstimator:
             mask_ids = detection.mask
             mask_ids = np.array(mask_ids)
             obj_mask[mask_ids] = 1
+            colors = plt.get_cmap('magma')((idx+0.01)/length if length>0 else 1)
+            colors = np.array((colors[0]*256, colors[1]*256, colors[2]*256), dtype=np.uint8)
+            seg_mask = np.zeros((height*width), dtype=bool)
+            seg_mask[mask_ids] = True 
+            seg_mask = seg_mask.reshape((height, width))
+            seg_image[seg_mask] = colors[:3] 
 
             # class ID
             name = detection.name
@@ -160,7 +170,7 @@ class GraspPoseEstimator:
             result.class_ids.append(obj_id)
 
         result.result_feedback = result.result_feedback + "bounding_boxes, class_ids, class_confidences, descriptions"
-
+        self.segmask_publisher.publish(ros_numpy.image.numpy_to_image(seg_image, encoding='rgb8'))
         # -- object segmentation Image --
         result.image = goal.rgb
         seg_image = ros_numpy.numpify(goal.rgb).copy()
