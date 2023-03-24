@@ -25,7 +25,7 @@ Three Docker containers will be started:
 ppf + verefine:
 ```
 ./download_data.sh
-cd compose/densefusion_pipeline
+cd compose/ppf_pipeline
 xhost +
 docker-compose up
 ```
