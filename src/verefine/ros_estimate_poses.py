@@ -46,7 +46,7 @@ ESTIMATE_MODE = 3
 
 if __name__ == "__main__":
 
-    publisher = rospy.Publisher("/verefine/estimated_poses", Image, queue_size=1)
+    publisher = rospy.Publisher("/pose_estimator/estimated_poses", Image, queue_size=1)
     # VeREFINE utilities
     dataset = YcbvDataset()
     width = rospy.get_param('/pose_estimator/im_width')

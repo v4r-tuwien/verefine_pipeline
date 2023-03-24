@@ -9,7 +9,7 @@ MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
 
 
 # essentials
-RUN apt-get update \
+RUN apt-get update --fix-missing\
     && apt-get install -y --no-install-recommends \
     apt-utils git curl nano tmux unzip wget build-essential cmake python-dev python-pip python-tk
 
