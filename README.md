@@ -4,6 +4,7 @@ Pipeline for detecting objects and estimating and refining their pose.
 The pipeline is implemented to use YCB-V objects and configured for the use on our Toyota HSR Sasha.
 
 ## Startup using the compose file(s)
+[Configure](#configurations) all files first. Don't forget to set the [IP Adress of the ROS Master and the development PC](#ros-master).
 
 The following commands will download the necessary data and then build all the docker containers and start them. 
 
@@ -60,6 +61,8 @@ They are published as images to these topics:
  
 ## Service and Action Server
 The pipeline will advertise a action server ```/pose_estimator/find_grasppose``` of the type [GenericImgProcAnnotator.action](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/action/GenericImgProcAnnotator.action). The response represents the refined poses of the detected objects in the camera frame.
+
+You can use the test file in ```src/test_obj_det.py``` to quickly check whether the pipeline works. 
 
 The services that are internally called are 
 - ```/pose_estimator/detect_objects``` of the type [detectron2_service_server.srv](https://github.com/v4r-tuwien/object_detector_msgs/blob/main/srv/detectron2_service_server.srv) 
