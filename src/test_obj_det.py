@@ -5,7 +5,7 @@ import actionlib
 from sensor_msgs.msg import Image
 
 
-def visualize():
+def get_poses():
     client = actionlib.SimpleActionClient('/pose_estimator/find_grasppose', GenericImgProcAnnotatorAction)
     res = client.wait_for_server(rospy.Duration(10.0))
     if res is False:
@@ -23,7 +23,6 @@ def visualize():
     print(f"Got pose for: {client.get_result().descriptions}")
 
 if __name__ == "__main__":
-    rospy.init_node("Vis")
-    print("Visualization ready.")
-    visualize()
+    rospy.init_node("get_poses")
+    get_poses()
 
