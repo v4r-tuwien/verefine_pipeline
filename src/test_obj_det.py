@@ -10,8 +10,7 @@ def visualize():
     res = client.wait_for_server(rospy.Duration(10.0))
     if res is False:
         rospy.logerr('Timeout when trying to connect to actionserver')
-        print(rospy.get_published_topics('/pose_estimator'))
-        #return
+        return
     goal = GenericImgProcAnnotatorGoal()
     print('Waiting for images')
     rgb = rospy.wait_for_message('/hsrb/head_rgbd_sensor/rgb/image_rect_color', Image)
