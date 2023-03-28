@@ -42,7 +42,6 @@ services:
     entrypoint: ""
     command: bash -c "source /ppf/catkin_ws/devel/setup.bash; 
                       export PYTHONPATH=/ppf/catkin_ws/devel/lib/python3/dist-packages:$$PYTHONPATH; 
-                      rosparam load -v /ppf/config/params.yaml /locateobject;
                       rosparam load  /config/params.yaml /pose_estimator;
                       ROS_NAMESPACE=pose_estimator python3 /ppf/src/locate_object/ros_locate_object.py"
     stdin_open: true

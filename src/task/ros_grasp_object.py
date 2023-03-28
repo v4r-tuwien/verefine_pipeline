@@ -2,36 +2,19 @@ import numpy as np
 import rospy
 import ros_numpy
 import actionlib
-import tf
 
-import os
-import PIL
 from PIL import Image as PImage
 import json
 import gc
 
 import time
-from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 
-import cv2
-import scipy.spatial.transform as scit
-from matplotlib import cm
-from PIL import Image as Img
 import matplotlib.pyplot as plt
 
-import message_filters
-from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
-from sensor_msgs.msg import Image, CameraInfo, RegionOfInterest
-from std_srvs.srv import Empty, EmptyResponse
-from object_detector_msgs.msg import PoseWithConfidence
-from object_detector_msgs.srv import detectron2_service_server, estimate_poses, refine_poses, get_poses, get_posesResponse
-from object_detector_msgs.msg import GenericImgProcAnnotatorAction, GenericImgProcAnnotatorGoal, GenericImgProcAnnotatorResult, GenericImgProcAnnotatorFeedback
-
-from util.renderer import EglRenderer as Renderer
-from util.plane_detector import PlaneDetector
-from util.dataset import YcbvDataset
-
+from sensor_msgs.msg import Image, RegionOfInterest
+from object_detector_msgs.srv import detectron2_service_server, estimate_poses
+from robokudo_msgs.msg import GenericImgProcAnnotatorAction, GenericImgProcAnnotatorResult, GenericImgProcAnnotatorFeedback
 
 # === define pipeline clients ===
 
@@ -55,9 +38,9 @@ def estimate(rgb, depth, detection):
         print("Service call failed: %s" % e)
 
 
-RGB_TOPIC = rospy.get_param('/pose_estimator/RGB_TOPIC')
-DEPTH_TOPIC = rospy.get_param('/pose_estimator/DEPTH_TOPIC')
-CAMERA_INFO = rospy.get_param('/pose_estimator/CAMERA_INFO')
+RGB_TOPIC = rospy.get_param('/pose_estimator/color_topic')
+DEPTH_TOPIC = rospy.get_param('/pose_estimator/depth_topic')
+CAMERA_INFO = rospy.get_param('/pose_estimator/camera_info_topic')
 
 class GraspPoseEstimator:
 
@@ -69,7 +52,6 @@ class GraspPoseEstimator:
         self.current_poses = []
         self.segmask_publisher = rospy.Publisher('/pose_estimator/segmentation', Image)
 
-    # TODO implement preemt possibilty and feedbacks(after we done something update feedback)
     def find_grasppose(self, goal):
         result = GenericImgProcAnnotatorResult()
         result.success = False
@@ -80,7 +62,6 @@ class GraspPoseEstimator:
         width, height = goal.rgb.width, goal.rgb.height
 
         # === check if we have an image ===
-        # TODO preempt or set_succeeded(result) with success=False
         if goal.rgb is None or goal.depth is None:
             print("no images available")
             result.result_feedback = "no images available"
@@ -91,9 +72,6 @@ class GraspPoseEstimator:
 
         # === run pipeline ===
         gc.collect()
-
-        # TODO needed?
-        # self.renderer._create_egl_context()
 
         self.current_poses = []
 
@@ -121,11 +99,7 @@ class GraspPoseEstimator:
             result.result_feedback = "nothing detected"
             result.success = False
             self.server.set_succeeded(result)
-            # self.server.set_preempted()
             return
-
-        # TODO: delete bad detections (under det_threshold and maybe increase det_threshold to 0.4 or 0.5 to get rid of
-        #  the double detections of an object)
 
         # fill result with the detections
         mask_detected_objects = np.ones((height * width), dtype=np.uint8)
@@ -162,7 +136,7 @@ class GraspPoseEstimator:
             obj_id = -1
             for number in ycbv_names:
                 if ycbv_names[number] == name:
-                    obj_id = int(number)  # + 1 #?
+                    obj_id = int(number) 
                     break
             assert obj_id > 0  # should start from 1
 
@@ -199,21 +173,12 @@ class GraspPoseEstimator:
             st = time.time()
             instance_poses = estimate(goal.rgb, goal.depth, detection)
 
-            # TODO needed??
-            # if detection.score > current_score:
-            #     self.observation_mask = np.zeros((goal.rgb.height * goal.rgb.width), dtype=np.uint8)
-            #     self.observation_mask[np.array(detection.mask)] = 1
-            #     current_score = detection.score
-
             duration = time.time() - st
             print("   received refined poses.")
             if instance_poses is None or len(instance_poses) == 0:
                 print("all poses for %s rejected after refinement" % detection.name)
                 continue
-            # for instance_pose in instance_poses:
-            #   self.vis_pose(instance_poses, "_refined")
 
-            # TODO: return best pose per bounding box even if under threshold??
             # # reject by pose confidence
             print(",".join(["%0.3f" % pose.confidence for pose in instance_poses]))
             instance_poses = [pose for pose in instance_poses if pose.confidence > th_refinement]
@@ -226,14 +191,11 @@ class GraspPoseEstimator:
                 print("all poses of %s rejected" % detection.name)
         assert len(poses) == len(confidences)
 
-        # self.observation_mask = self.observation_mask.reshape((goal.rgb.height, goal.rgb.width))
-
-        # TODO: not needed??
         # === select pose with highest confidence === (TODO and scale by distance?)
         if len(confidences) > 0:
             best_hypothesis = np.argmax(confidences)
             best_pose = poses[best_hypothesis]
-            # self.vis_pose(poses) #bestpose)
+            # self.vis_pose(poses) #bestpose) # not working, some thirdpart-tool error
 
             self.current_poses = poses
         else:
@@ -253,7 +215,6 @@ class GraspPoseEstimator:
         result.result_feedback = result.result_feedback + ", pose_results"
 
         # Notify client that action is finished and result is ready
-        # self.working = False
         result.success = True
         self.server.set_succeeded(result)
         return

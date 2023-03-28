@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 import rospy
-from object_detector_msgs.msg import GenericImgProcAnnotatorAction, GenericImgProcAnnotatorGoal
+from robokudo_msgs.msg import GenericImgProcAnnotatorAction, GenericImgProcAnnotatorGoal
 import actionlib
 from sensor_msgs.msg import Image
 

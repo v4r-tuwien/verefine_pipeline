@@ -1,12 +1,7 @@
 # use ros as base image
 FROM nvidia/opengl:1.0-glvnd-runtime-ubuntu16.04 as nvidia
-#FROM ros:kinetic-ros-base
-
-#COPY --from=nvidia /usr/local /usr/local
-#COPY --from=nvidia /etc/ld.so.conf.d/glvnd.conf /etc/ld.so.conf.d/glvnd.conf
 
 MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
-
 
 # essentials
 RUN apt-get update --fix-missing\
@@ -59,11 +54,8 @@ RUN echo "source /task/catkin_ws/devel/setup.bash" >> /root/.bashrc
 # clone and build message and service definitions
 RUN /bin/bash -c 'cd /task/catkin_ws/src; \
                   git clone https://github.com/v4r-tuwien/object_detector_msgs.git'
-#RUN /bin/bash -c 'cd /task/catkin_ws/src; \
-#                  git clone https://github.com/v4r-tuwien/grasping_pipeline.git'
-#RUN /bin/bash -c 'cd /task/catkin_ws/src; \
-#                  git clone https://github.com/markusltnr/sasha_handover.git'
-# TODO remove dependencies from grasping and handover (CMake and package.xml)
+RUN /bin/bash -c 'cd /task/catkin_ws/src; \
+                  git clone https://gitlab.informatik.uni-bremen.de/robokudo/robokudo_msgs.git'
 RUN /bin/bash -c '. /opt/ros/kinetic/setup.bash; cd /task/catkin_ws; catkin build'
 
 # clone and build ros_numpy
@@ -79,7 +71,7 @@ RUN /bin/bash -c 'cd /task/3rdparty; \
 WORKDIR /task
 COPY ./src/task /task/src
 COPY ./src/verefine/util /task/src/util
-COPY ./src/config.json /task/src
+COPY ./config/config.json /task/src
 ENV PYTHONPATH=/task:/task/src:$PYTHONPATH
 RUN mv /task/src/renderer.py /task/3rdparty/verefine/src/verefine
 RUN rm /task/src/util/renderer.py
@@ -105,16 +97,8 @@ RUN pip install scikit-image==0.14.5 open3d==0.9.0.0
 ENV __NV_PRIME_RENDER_OFFLOAD=1 
 ENV __GLX_VENDOR_LIBRARY_NAME=nvidia
 
-
-# install tinyobjloader from source (pypl doesn't work) -- required for rendering of visualizations
-#WORKDIR /task/3rdparty
-#RUN git clone https://github.com/syoyo/tinyobjloader.git && \
-#    cd tinyobjloader/python/ && \
-#    python setup.py install
 RUN pip install tinyobjloader==2.0.0rc7
 
-# copy data for rendering of visualizations
-#COPY ./data/models.zip /task/data/models.zip
 RUN mkdir -p /verefine/data
 COPY ./data /verefine/data
 
