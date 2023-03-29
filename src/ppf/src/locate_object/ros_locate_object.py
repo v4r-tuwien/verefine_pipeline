@@ -208,27 +208,26 @@ class LocateObject:
             rgb, depth = ros_numpy.numpify(self.rgb), ros_numpy.numpify(self.depth)
             obj_models_to_search = [goal.det.name] if goal.det.name != "" else []
 
-            if self.use_verification:
-                # -- compute normal image
-                D_px = depth.copy()
-                # inpaint missing depth values
-                D_px = cv.inpaint(D_px.astype(np.float32), np.uint8(D_px == 0), 3, cv.INPAINT_NS)
-                # blur
-                blur_size = (7, 7)
-                D_px = cv.GaussianBlur(D_px, blur_size, sigmaX=10.0)
-                # get derivatives
-                kernelx = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
-                kernely = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
-                dzdx = cv.filter2D(D_px, -1, kernelx)
-                dzdy = cv.filter2D(D_px, -1, kernely)
-                # gradient ~ normal
-                normal = np.dstack((dzdy, dzdx, D_px != 0.0))  # only where we have a depth value
-                n = np.linalg.norm(normal, axis=2)
-                n = np.dstack((n, n, n))
-                normal = np.divide(normal, n, where=(n != 0))
-                # remove invalid values
-                normal[n == 0] = 0.0
-                normal[depth == 0] = 0.0
+            # -- compute normal image
+            D_px = depth.copy()
+            # inpaint missing depth values
+            D_px = cv.inpaint(D_px.astype(np.float32), np.uint8(D_px == 0), 3, cv.INPAINT_NS)
+            # blur
+            blur_size = (7, 7)
+            D_px = cv.GaussianBlur(D_px, blur_size, sigmaX=10.0)
+            # get derivatives
+            kernelx = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
+            kernely = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
+            dzdx = cv.filter2D(D_px, -1, kernelx)
+            dzdy = cv.filter2D(D_px, -1, kernely)
+            # gradient ~ normal
+            normal = np.dstack((dzdy, dzdx, D_px != 0.0))  # only where we have a depth value
+            n = np.linalg.norm(normal, axis=2)
+            n = np.dstack((n, n, n))
+            normal = np.divide(normal, n, where=(n != 0))
+            # remove invalid values
+            normal[n == 0] = 0.0
+            normal[depth == 0] = 0.0
 
             # == preprocessing
             # -- get plane pose, inliers and scene points
