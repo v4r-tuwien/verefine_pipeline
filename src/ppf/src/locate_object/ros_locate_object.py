@@ -92,9 +92,6 @@ class LocateObject:
         self.down_scale = rospy.get_param('/pose_estimator/down_scale', 1)  # down_scale speeds things up by already subsampling the image [power of 2]
         self.max_dist = rospy.get_param('/pose_estimator/max_dist', 1.0)  # crop points farther than this [meters]
         self.slop = 0.2  # max delay between rgb and depth image [seconds]
-        self.use_refinement = rospy.get_param('/pose_estimator/use_refinement', True)
-        self.use_verification = rospy.get_param('/pose_estimator/use_verification', True)
-        self.use_verefine = True and self.use_refinement and self.use_verification  # combines both
         self.debug_visualization = rospy.get_param('/pose_estimator/debug_visualization', True)  # visualize the process on an image topic
         if self.debug_visualization:
             self.verefine_debub_img_pub = rospy.Publisher("/pose_estimator/ppf_verefine_result", Image, queue_size=1)
