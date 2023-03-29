@@ -1,7 +1,8 @@
 import numpy as np
 import tensorflow as tf_backend
+import os
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
-from mrcnn.config import Config
 from mrcnn import utils
 import mrcnn.model as modellib
 
@@ -11,7 +12,7 @@ from src.maskrcnn.maskrcnn_util import BopInferenceConfig
 class MaskRcnnDetector:
 
     """
-    TODO
+    Mask R-CNN detector
     """
 
     def __init__(self):
@@ -35,7 +36,7 @@ class MaskRcnnDetector:
             self.config.DETECTION_NMS_THRESHOLD = 0.5
 
             self.detection_model = modellib.MaskRCNN(mode="inference", config=self.config, model_dir="/")
-            self.detection_model.load_weights("/maskrcnn/data/mask_rcnn_ycbv_0005.h5", by_name=True)  # TODO load
+            self.detection_model.load_weights("/maskrcnn/data/maskrcnn_ycbv.h5", by_name=True)  # TODO load
 
             self.detection_labels = list(range(1, 22))  # TODO load
 
@@ -61,20 +62,13 @@ class MaskRcnnDetector:
             rois = r['rois']
             rois = rois - [window[0], window[1], window[0], window[1]]
 
-            # new_rois = []
-            # for roi in rois:
-            #     new_rois.append([roi[1], roi[3], roi[0], roi[2]])  # TODO do we need to adapt roi size?
-            # rois = new_rois
-
             obj_orders = np.array(r['class_ids']) - 1
             obj_ids = []
             for obj_order in obj_orders:
-                obj_ids.append(obj_order+1)#self.detection_labels[obj_order])
+                obj_ids.append(obj_order+1)
+
             # now c_ids are the same annotation those of the names of ply/gt files
             scores = np.array(r['scores'])
             masks = r['masks'][window[0]:window[2], window[1]:window[3], :]
-
-            # print(masks.shape)
-            # return rois, obj_orders, obj_ids, scores, masks
 
             return obj_ids, rois, masks, scores

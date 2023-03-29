@@ -1,78 +1,117 @@
 FROM ros:melodic-perception-bionic
 
-# install packages
-RUN apt-get update && apt-get install -q -y \
-  dirmngr \
-  gnupg2 \
-#   lsb-release \
-# install packages for building software
-#   cmake \
-  git \
-# some more needed packages
-  sudo \
-  wget \
-# catkin build >> catkin_make
-  python-catkin-tools \
-# some useful programs
-  vim \
-  tmux \
-# dependencies for ppf_recognizer
-  libcmph-dev \
-  # libgoogle-glog-dev \  # glog package doesn't include cmake config scripts ??
-# needed for pybind11
-  python3-dev \
-  python3-pip \
-  && rm -rf /var/lib/apt/lists/*
+MAINTAINER Dominik Bauer <bauer@acin.tuwien.ac.at>
+LABEL Description="LocateObject - via ROS Melodic (Ubuntu 18.04, Bionic)" Vendor="V4R" Version="1.0"
 
-# create a user
-RUN adduser --gecos "ROS User" --disabled-password v4r
+# --- basics
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    apt-utils \
+    apt-transport-https \
+    git \
+    curl \
+    nano \
+    tmux \
+    unzip \
+    wget \
+    build-essential \
+    cmake \
+    libcmph-dev \
+    python3-dev \
+    python3-pip \
+    python3-catkin-pkg-modules \
+    python3-rospkg-modules \
+    python3-empy \
+    python-catkin-tools \
+    software-properties-common \
+    ros-melodic-vision-msgs \
+    && rm -rf /var/lib/apt/lists/*
+ENV LANG C.UTF-8
+ENV LC_ALL C.UTF-8
 
-# remove the need to enter a sudo password for the v4r user
-RUN echo "v4r ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+# --- OpenGL (via https://gitlab.com/nvidia/container-images/opengl/-/blob/ubuntu18.04/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglvnd0 libgl1 libglx0 libegl1 libgles2 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=nvidia/opengl:1.0-glvnd-runtime-ubuntu18.04 /usr/share/glvnd/egl_vendor.d/10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
-USER v4r
+# -- CUDA
+COPY --from=nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04 /usr/local/cuda /usr/local/cuda
+COPY --from=nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04 /usr/lib/x86_64-linux-gnu/libcudnn.so /usr/lib/x86_64-linux-gnu/libcudnn.so
+ENV PATH=/usr/local/cuda/bin${PATH:+:${PATH}}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+ENV NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all
 
-# Set HOME evnironment variable
-RUN HOME=/home/v4r
 
-# build and install google glog
-RUN /bin/bash -c 'cd /home/v4r; git clone --branch v0.4.0 https://github.com/google/glog.git; \
-                  cd glog; cmake -H. -Bbuild -G "Unix Makefiles"; cmake --build build; \
-                  sudo cmake --build build --target install; cd ..; sudo rm -rf glog'
+# --- ROS
+ENV ROS_DISTRO melodic
+# use Python3 with ROS (hack from https://medium.com/@beta_b0t/how-to-setup-ros-with-python-3-44a69ca3>
+RUN pip3 install rospkg catkin_pkg
+# install ros_numpy
+WORKDIR /ppf/3rdparty
+RUN /bin/bash -c 'git clone https://github.com/eric-wieser/ros_numpy.git'
+WORKDIR /ppf/3rdparty/ros_numpy
+RUN python3 setup.py install
 
-# build and install pybind11,
-# using the pybind11-dev package causes a strange error when building the pyppf target
-RUN /bin/bash -c 'python3 -m pip install pytest'
-RUN /bin/bash -c 'cd /home/v4r/; git clone --branch v2.4.3 https://github.com/pybind/pybind11.git; cd pybind11; \
-                  mkdir build; cd build; cmake ..; make -j$(nproc); sudo make install; \
-                  cd ../..; sudo rm -rf pybind11'
+# create a python3 catkin workspace
+WORKDIR /ppf
+RUN mkdir -p /ppf/catkin_ws/src
+RUN /bin/bash -c 'cd /ppf/catkin_ws/src; \
+                  git clone https://github.com/v4r-tuwien/object_detector_msgs.git'
+RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /ppf/catkin_ws; catkin init; catkin build'
+RUN echo "source /ppf/catkin_ws/devel/setup.bash" >> /root/.bashrc
+RUN /bin/bash -c 'cd /ppf/catkin_ws/; apt-get update; source /ppf/catkin_ws/devel/setup.bash; \
+                  wstool init; wstool set -y src/geometry2 --git https://github.com/ros/geometry2 -v 0.6.5; wstool up; \
+                  rosdep install --from-paths src --ignore-src -y -r; rm -rf /var/lib/apt/lists/*'
+# build custom message and service definitions
+RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /ppf/catkin_ws; catkin build --cmake-args -DCMAKE_BUILD_TYPE=Release \
+            -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+            -DPYTHON_INCLUDE_DIR=/usr/include/python3.6m \
+            -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.6m.so'
 
-# clone ppf repo
-RUN /bin/bash -c 'cd /home/v4r; git clone https://gitlab+deploy-token-24:_QgAnkQE-5yrTLP7woPV@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf.git; cd ppf; git checkout 79c647c6'
-RUN /bin/bash -c 'cd /home/v4r/ppf; mkdir build; cd build; cmake ..; make -j$(nproc)'
-# RUN /bin/bash -c 'cd home/v4r; rm -rf ppf' # uncomment once ppf repo supports installing files
+# --- LOCATE OBJECT DEPENDENCIES
+# update cmake (via KitWare)
+RUN /bin/bash -c "apt-get update;\
+                  wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null; \
+                  echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ bionic main' | sudo tee /etc/apt/sources.list.d/kitware.list >/dev/null; \
+                  apt-get update && apt-get install -y cmake && rm -rf /var/lib/apt/lists/*"
+# build pybind11 from source
+RUN pip3 install pytest
+WORKDIR /ppf/3rdparty
+RUN /bin/bash -c 'git clone https://github.com/pybind/pybind11.git'
+WORKDIR /ppf/3rdparty/pybind11/build
+RUN /bin/bash -c 'cmake .. && make -j$(getconf _NPROCESSORS_ONLN) && make install && rm -rf *'
+# build glog from source
+WORKDIR /ppf/3rdparty
+RUN /bin/bash -c 'git clone https://github.com/google/glog.git'
+WORKDIR /ppf/3rdparty/glog/build
+RUN /bin/bash -c 'cmake .. && make -j$(getconf _NPROCESSORS_ONLN) && make install && rm -rf *'
 
-# create a catkin workspace
-RUN mkdir -p /home/v4r/catkin_ws/src
-RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /home/v4r/catkin_ws; catkin init'
-RUN echo "source /home/v4r/catkin_ws/devel/setup.bash" >> /home/v4r/.bashrc
+# --- LOCATE OBJECT
+# build PPF project with python bindings
+COPY src/ppf/src/ppf /ppf/src/ppf
+WORKDIR /ppf/src/ppf/build
+RUN /bin/bash -c 'cmake .. -DPYBIND11_PYTHON_VERSION=3.6 && make -j$(getconf _NPROCESSORS_ONLN) && make install'
+# plane pop-out and canister demo dependencies
+RUN pip3 install --upgrade pip
+RUN pip3 install --ignore-installed PyYAML numpy==1.19.1 imageio==2.9.0 scikit-image==0.17.2 scipy==1.5.2 open3d==0.15.2
+RUN pip3 install PyOpenGL-accelerate==3.1.6
+# verification dependencies
+RUN pip3 install Cython  # needs to be installed first
+RUN pip3 install trimesh==3.9.9 pyopengl==3.1.5 pyglet==1.5.15 glumpy==1.1.0 opencv-python-headless==4.5.1.48 pybullet==2.7.5
 
-# clone ros packages, gitlab deploy tokens are needed since the repos aren't public
-RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
-                  git clone https://gitlab+deploy-token-22:zKCM9FnYr86bgaABY63_@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf_recognizer_ros.git; \
-                  cd ppf_recognizer_ros; git checkout bbf03129'
+COPY src/ppf/src/locate_object /ppf/src/locate_object
+COPY src/ppf/src/verefine /ppf/src/verefine
+COPY src/ppf/src/utility /ppf/src/utility
+RUN mkdir -p /verefine/data
+COPY ./data /verefine/data
+COPY ./src/verefine/util /ppf/src/locate_object/util
 
-RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
-                  git clone https://gitlab+deploy-token-23:xzQLssogTa-t5igeXrv8@rgit.acin.tuwien.ac.at/jeremy.itamah/ppf_recognizer_ros_msgs.git; \
-                  cd ppf_recognizer_ros_msgs; git checkout 05206cc5'
+RUN mkdir -p /config
+COPY ./config /config
 
-RUN /bin/bash -c 'cd /home/v4r/catkin_ws/src; \
-                  git clone https://gitlab+deploy-token-28:VxqryrgVYvjaUg4tyJdY@rgit.acin.tuwien.ac.at/msuchi/object_detector_msgs.git; \
-                  cd object_detector_msgs; git checkout 49e1071e'
-
-RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /home/v4r/catkin_ws; catkin build -DPPFRecognizer_DIR=/home/v4r/ppf/build -DCMAKE_MODULE_PATH="/home/v4r/ppf/cmake;${CMAKE_MODULE_PATH}"'
-
-## setup entrypoint
-COPY ./src/ppf/ros_entrypoint.sh /
+# --- ROS
+# entry point
+WORKDIR /ppf
+COPY src/ppf/ros_entrypoint.sh /
+RUN chmod +x /ros_entrypoint.sh
 ENTRYPOINT ["/ros_entrypoint.sh"]
-CMD ["bash"]

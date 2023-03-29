@@ -51,7 +51,7 @@ if __name__ == "__main__":
             # ---
             name = ""
             for idx, obj_name in dataset.obj_names.items():
-                if idx == obj_id - 1:
+                if int(idx) == int(obj_id):
                     name = obj_name
                     break
             assert name != ""

@@ -1,11 +1,5 @@
 
 import os,sys
-#Please specify the mask_rcnn directory [todo: using json for specify the folder]
-#github:https://github.com/matterport/Mask_RCNN 
-#MASKRCNN_DIR="/home/kiru/common_ws/Mask_RCNN_Mod/"
-#sys.path.append(MASKRCNN_DIR)
-#sys.path.append(".")
-#sys.path.append("./bop_toolkit")
 import numpy as np
 from mrcnn.config import Config
 from mrcnn import utils

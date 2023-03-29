@@ -57,7 +57,7 @@ RUN /bin/bash -c '. /opt/ros/kinetic/setup.bash; cd /maskrcnn/catkin_ws; catkin 
 # ----------------
 
 # smh get errors otherwise
-RUN pip3 install --upgrade wheel setuptools==51.0.0 pip==20.3.4
+RUN pip3 install --upgrade wheel==0.34.0 setuptools==51.0.0 pip==20.3.4
 
 
 # clone and build Mask R-CNN (note: replace tensorflow with tensorflow-gpu)
@@ -70,7 +70,9 @@ RUN pip3 install --no-cache-dir numpy==1.18.5 scipy==1.4.1 Pillow==7.2.0 cython=
 RUN python3 setup.py install
 
 # hack from https://medium.com/@beta_b0t/how-to-setup-ros-with-python-3-44a69ca36674
-RUN pip3 install rospkg catkin_pkg
+RUN pip3 install rospkg catkin_pkg 
+
+RUN pip3 install trimesh==3.16.4
 
 # install ros_numpy
 WORKDIR /maskrcnn/3rdparty
@@ -82,13 +84,18 @@ RUN python3 setup.py install
 # copy src files
 WORKDIR /maskrcnn
 COPY ./src/maskrcnn /maskrcnn/src/maskrcnn
-COPY ./src/util /maskrcnn/src/util
+COPY ./src/verefine/util /maskrcnn/src/util
 COPY ./src/__init__.py /maskrcnn/src
 ENV PYTHONPATH=/maskrcnn:/maskrcnn/src:$PYTHONPATH
 
 # copy data
 COPY ./data /maskrcnn/data/
 WORKDIR /maskrcnn/data
+RUN mkdir -p /verefine/data
+RUN cp -r /maskrcnn/data/* /verefine/data/
+
+RUN mkdir -p /config
+COPY ./config /config
 
 # entry point
 WORKDIR /maskrcnn
