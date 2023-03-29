@@ -133,9 +133,17 @@ models_dir: "/verefine/data/models/renderer"  # ppf model directory
 ycbv_names: /verefine/data/ycbv_names.json  # ycbv mapping form *.ply to object name
 ycbv_verefine: /verefine/data/ycbv_verefine.json  # necessary verefine information about the models
 
-RGB_TOPIC: /hsrb/head_rgbd_sensor/rgb/image_rect_color # rgb image topic
-DEPTH_TOPIC: /hsrb/head_rgbd_sensor/depth_registered/image_rect_raw  # depth image topic
-CAMERA_INFO: /hsrb/head_rgbd_sensor/rgb/camera_info # camera info topic
+color_topic: /hsrb/head_rgbd_sensor/rgb/image_rect_color #  rgb image topic
+depth_topic: /hsrb/head_rgbd_sensor/depth_registered/image_rect_raw  # depth image topic
+camera_info_topic: /hsrb/head_rgbd_sensor/rgb/camera_info # camera info topic
+
+debug_visualization: True # for ppf 
+publish_tf: True
+max_dist: 1.0  # crop points farther than this [meters]
+down_scale: 1  # down_scale speeds things up by already subsampling the image [power of 2]
+
+distance_threshold: 0.01 # for plane detection
+to_meters: 0.001 # for plane detection
 ```
 
 ### ROS Master
