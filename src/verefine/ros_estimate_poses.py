@@ -41,18 +41,18 @@ from util.dataset import YcbvDataset
 from densefusion.densefusion import DenseFusion  # includes estimator and refiner
 
 
-CAMERA_INFO = "/hsrb/head_rgbd_sensor/rgb/camera_info"
+CAMERA_INFO = rospy.get_param('/pose_estimator/CAMERA_INFO')
 ESTIMATE_MODE = 3
 
 if __name__ == "__main__":
 
-    publisher = rospy.Publisher("/verefine/estimated_poses", Image, queue_size=1)
+    publisher = rospy.Publisher("/pose_estimator/estimated_poses", Image, queue_size=1)
     # VeREFINE utilities
     dataset = YcbvDataset()
-    width = rospy.get_param('/hsr_grasping/im_width')
-    height = rospy.get_param('/hsr_grasping/im_height')
-    intrinsics = np.asarray(rospy.get_param('/hsr_grasping/intrinsics'))
-    ycbv_names_json = rospy.get_param('/hsr_grasping/ycbv_names')
+    width = rospy.get_param('/pose_estimator/im_width')
+    height = rospy.get_param('/pose_estimator/im_height')
+    intrinsics = np.asarray(rospy.get_param('/pose_estimator/intrinsics'))
+    ycbv_names_json = rospy.get_param('/pose_estimator/ycbv_names')
     simulator, renderer = Simulator(dataset), Renderer(dataset, width, height)
     plane_detector = PlaneDetector(width, height, intrinsics, down_scale=1)
     

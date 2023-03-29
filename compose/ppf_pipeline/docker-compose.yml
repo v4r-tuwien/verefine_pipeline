@@ -1,6 +1,8 @@
 version: '2.4'
 services:
 
+  # run object detection
+
   detect:
     image: "maskrcnn"
     network_mode: "host"
@@ -8,24 +10,22 @@ services:
     build: 
       context: ../../
       dockerfile: src/maskrcnn/Dockerfile
-    volumes:
-      - ../../:/hsr-grasping
     extra_hosts:
       - "hsrb:10.0.0.143"
     environment:
-      # ROS_MASTER_URI:     # empty value means use same as host
       ROS_MASTER_URI: "http://hsrb:11311"
+      ROS_IP: "10.0.0.206"
     
     command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; 
-                      rosparam load  /config/params.yaml /hsr_grasping;
-                      ROS_NAMESPACE=hsr_grasping python3 /maskrcnn/src/maskrcnn/ros_detection.py"
+                      rosparam load  /config/params.yaml /pose_estimator;
+                      ROS_NAMESPACE=pose_estimator python3 /maskrcnn/src/maskrcnn/ros_detection.py"
     stdin_open: true
     tty: true
 
-  # run seperate densefusion containers for estimation and refinement or run both in the same container ?
+  # run ppf for estimation and verefine for refinement
 
-  estimate_refine_ppf:
-    image: "ppf"
+  estimate_refine:
+    image: "ppf_verefine"
     network_mode: "host"
     build: 
       context: ../../
@@ -42,21 +42,20 @@ services:
     entrypoint: ""
     command: bash -c "source /ppf/catkin_ws/devel/setup.bash; 
                       export PYTHONPATH=/ppf/catkin_ws/devel/lib/python3/dist-packages:$$PYTHONPATH; 
-                      rosparam load -v /ppf/config/params.yaml /locateobject;
-                      rosparam load  /config/params.yaml /hsr_grasping;
-                      ROS_NAMESPACE=hsr_grasping python3 /ppf/src/locate_object/ros_locate_object.py"
+                      rosparam load  /config/params.yaml /pose_estimator;
+                      ROS_NAMESPACE=pose_estimator python3 /ppf/src/locate_object/ros_locate_object.py"
     stdin_open: true
     tty: true
 
-  grasp:
-    image: "hsr-grasping"
+  # controller node for the whole pose estimation
+
+  pose:
+    image: "pose_estimator"
     network_mode: "host"
     build: 
       context: ../../
       dockerfile: src/task/Dockerfile
     runtime: "nvidia"
-    volumes:
-    - ../../lm:/task/lm
     extra_hosts:
       - "hsrb:10.0.0.143"
     environment:
@@ -67,8 +66,8 @@ services:
       QT_X11_NO_MITSHM: 1 
 
     command: bash -c "source /task/catkin_ws/devel/setup.bash; 
-                      rosparam load  /config/params.yaml /hsr_grasping;
-                      ROS_NAMESPACE=hsr_grasping python /task/src/ros_grasp_object.py"
+                      rosparam load  /config/params.yaml /pose_estimator;
+                      ROS_NAMESPACE=pose_estimator python /task/src/ros_grasp_object.py"
 
     stdin_open: true
     tty: true

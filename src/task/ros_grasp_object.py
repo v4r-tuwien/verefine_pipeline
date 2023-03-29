@@ -1,11 +1,9 @@
 import numpy as np
 import rospy
 import ros_numpy
-import actionlib
 import tf
 
 import os
-import PIL
 from PIL import Image as PImage
 import json
 import gc
@@ -15,18 +13,12 @@ from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 
 import cv2
-import scipy.spatial.transform as scit
 from matplotlib import cm
 from PIL import Image as Img
 
 import message_filters
-from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
-from sensor_msgs.msg import Image, CameraInfo
-from std_srvs.srv import Empty, EmptyResponse
-from object_detector_msgs.msg import PoseWithConfidence
-from object_detector_msgs.srv import detectron2_service_server, estimate_poses, refine_poses, get_poses, get_posesResponse
-#from grasping_pipeline.msg import ExecuteGraspAction, ExecuteGraspGoal
-#from sasha_handover.msg import HandoverAction, HandoverGoal
+from sensor_msgs.msg import Image
+from object_detector_msgs.srv import detectron2_service_server, estimate_poses, get_poses, get_posesResponse
 
 from util.renderer import EglRenderer as Renderer
 from util.plane_detector import PlaneDetector
@@ -55,9 +47,9 @@ def estimate(rgb, depth, detection):
         print("Service call failed: %s" % e)
 
 
-RGB_TOPIC = rospy.get_param('/hsr_grasping/RGB_TOPIC')
-DEPTH_TOPIC = rospy.get_param('/hsr_grasping/DEPTH_TOPIC')
-CAMERA_INFO = rospy.get_param('/hsr_grasping/CAMERA_INFO')
+RGB_TOPIC = rospy.get_param('/pose_estimator/color_topic')
+DEPTH_TOPIC = rospy.get_param('/pose_estimator/depth_topic')
+CAMERA_INFO = rospy.get_param('/pose_estimator/camera_info_topic')
 
 class Grasper:
 
@@ -69,17 +61,16 @@ class Grasper:
         
         self.dataset = YcbvDataset()
         width, height, intrinsics = self.dataset.width, self.dataset.height, self.dataset.camera_intrinsics
-        width = rospy.get_param('/hsr_grasping/im_width')
-        height = rospy.get_param('/hsr_grasping/im_height')
-        intrinsics = np.asarray(rospy.get_param('/hsr_grasping/intrinsics'))
-        self.ycbv_names_json = rospy.get_param('/hsr_grasping/ycbv_names')
+        width = rospy.get_param('/pose_estimator/im_width')
+        height = rospy.get_param('/pose_estimator/im_height')
+        intrinsics = np.asarray(rospy.get_param('/pose_estimator/intrinsics'))
+        self.ycbv_names_json = rospy.get_param('/pose_estimator/ycbv_names')
         self.intrinsics = intrinsics
         self.renderer = Renderer(self.dataset, width, height)
         self.plane_detector = PlaneDetector(width, height, intrinsics, down_scale=1)
 
-        self.pub_segmentation = rospy.Publisher("/hsr_grasping/segmentation", Image)
-        # self.pub_initial = rospy.Publisher("/hsr_grasping/initial_poses", Image)
-        self.pub_refined = rospy.Publisher("/hsr_grasping/refined_poses", Image)
+        self.pub_segmentation = rospy.Publisher("/pose_estimator/segmentation", Image)
+        self.pub_refined = rospy.Publisher("/pose_estimator/refined_poses", Image)
         self.pub_poses = tf.TransformBroadcaster()
         self.current_poses = []
 
@@ -105,8 +96,6 @@ class Grasper:
 
         self.working = True
         gc.collect()
-
-        #self.renderer._create_egl_context()  # TODO needed?
 
         self.current_poses = []
 
@@ -156,8 +145,6 @@ class Grasper:
             if instance_poses is None or len(instance_poses) == 0:
                 print("all poses for %s rejected after refinement" % detection.name)
                 continue
-            # for instance_pose in instance_poses:
-            #   self.vis_pose(instance_poses, "_refined")
 
             # # reject by pose confidence
             print(",".join(["%0.3f" % pose.confidence for pose in instance_poses]))
@@ -177,8 +164,6 @@ class Grasper:
         if not os.path.exists("/task/lm"):
             os.mkdir("/task/lm")
         filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        #PImage.fromarray(ros_numpy.numpify(self.rgb)).save("/task/lm/%s_rgb.png" % (filename))
-        #PImage.fromarray(ros_numpy.numpify(self.depth)).save("/task/lm/%s_depth.png" % (filename))
 
         for ii, detection in enumerate(detections):
             name = detection.name
@@ -226,12 +211,12 @@ class Grasper:
                                     "%0.3f" % (duration + duration_detection)]
                 file.write(",".join(parts) + "\n")
 
-        # === select pose with highest confidence === TODO and scale by distance?
+        # === select pose with highest confidence 
 
         if len(confidences) > 0:
             best_hypothesis = np.argmax(confidences)
             best_pose = poses[best_hypothesis]
-            #self.vis_pose(poses) #bestpose)
+            #self.vis_pose(poses)  # not working, some thirdpart-tool error
 
             self.current_poses = poses
         else:
@@ -277,8 +262,6 @@ class Grasper:
     def vis_pose(self, poses):
         rgb = ros_numpy.numpify(self.rgb)
         depth = ros_numpy.numpify(self.depth) / 1000.
-        #camera_info = rospy.wait_for_message(CAMERA_INFO, CameraInfo, timeout=10)
-        #intrinsics = np.array(camera_info.K).reshape(3, 3)
 
         plane = self.plane_detector.detect(depth, self.observation_mask)
 

@@ -54,7 +54,7 @@ RUN python3 setup.py install
 
 # create a python3 catkin workspace
 WORKDIR /ppf
-COPY src/ppf/src/tracebot_msgs /ppf/catkin_ws/src/tracebot_msgs
+RUN mkdir -p /ppf/catkin_ws/src
 RUN /bin/bash -c 'cd /ppf/catkin_ws/src; \
                   git clone https://github.com/v4r-tuwien/object_detector_msgs.git'
 RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; cd /ppf/catkin_ws; catkin init; catkin build'
@@ -102,16 +102,12 @@ RUN pip3 install trimesh==3.9.9 pyopengl==3.1.5 pyglet==1.5.15 glumpy==1.1.0 ope
 COPY src/ppf/src/locate_object /ppf/src/locate_object
 COPY src/ppf/src/verefine /ppf/src/verefine
 COPY src/ppf/src/utility /ppf/src/utility
-COPY src/ppf/config /ppf/config
 RUN mkdir -p /verefine/data
 COPY ./data /verefine/data
 COPY ./src/verefine/util /ppf/src/locate_object/util
 
 RUN mkdir -p /config
 COPY ./config /config
-
-# --- CLEANUP
-# RUN rm -rf /var/lib/apt/lists/*
 
 # --- ROS
 # entry point

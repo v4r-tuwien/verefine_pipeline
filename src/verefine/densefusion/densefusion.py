@@ -12,7 +12,7 @@ from torch.autograd import Variable
 import torchvision.transforms as transforms
 
 from lib.network import PoseNet, PoseRefineNet
-from lib.transformations import quaternion_matrix, quaternion_from_matrix
+from lib.transformations import quaternion_matrix
 
 
 class DenseFusion:

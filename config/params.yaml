@@ -15,6 +15,18 @@ ycbv_names: /verefine/data/ycbv_names.json
 ycbv_verefine: /verefine/data/ycbv_verefine.json
 
 # Topics
-RGB_TOPIC: /hsrb/head_rgbd_sensor/rgb/image_rect_color
-DEPTH_TOPIC: /hsrb/head_rgbd_sensor/depth_registered/image_rect_raw
-CAMERA_INFO: /hsrb/head_rgbd_sensor/rgb/camera_info
+color_topic: /hsrb/head_rgbd_sensor/rgb/image_rect_color
+depth_topic: /hsrb/head_rgbd_sensor/depth_registered/image_rect_raw
+camera_info_topic: /hsrb/head_rgbd_sensor/rgb/camera_info
+
+# ppf topics
+debug_visualization: True
+publish_tf: True
+use_refinement: True
+use_verefine: True
+max_dist: 1.0  # crop points farther than this [meters]
+down_scale: 1  # down_scale speeds things up by already subsampling the image [power of 2]
+
+# Plane detection
+distance_threshold: 0.01
+to_meters: 0.001
