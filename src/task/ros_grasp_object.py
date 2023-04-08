@@ -13,19 +13,20 @@ from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
 
 from sensor_msgs.msg import Image, RegionOfInterest
-from object_detector_msgs.srv import detectron2_service_server, estimate_poses
+from object_detector_msgs.srv import estimate_poses
+from object_detector_msgs.msg import Detections, Detection, BoundingBox
 from robokudo_msgs.msg import GenericImgProcAnnotatorAction, GenericImgProcAnnotatorResult, GenericImgProcAnnotatorFeedback
 
 # === define pipeline clients ===
 
-def detect(rgb):
-    rospy.wait_for_service('detect_objects')
-    try:
-        detect_objects = rospy.ServiceProxy('detect_objects', detectron2_service_server)
-        response = detect_objects(rgb)
-        return response.detections.detections
-    except rospy.ServiceException as e:
-        print("Service call failed: %s" % e)
+# def detect(rgb):
+#     rospy.wait_for_service('detect_objects')
+#     try:
+#         detect_objects = rospy.ServiceProxy('detect_objects', detectron2_service_server)
+#         response = detect_objects(rgb)
+#         return response.detections.detections
+#     except rospy.ServiceException as e:
+#         print("Service call failed: %s" % e)
 
 
 def estimate(rgb, depth, detection):
@@ -84,22 +85,37 @@ class GraspPoseEstimator:
               % (th_detection, th_estimation, th_refinement))
 
         # detect all instances in image
-        feedback.feedback = "requesting detection..."
-        self.server.publish_feedback(feedback)
-        print("requesting detection...")
-        st = time.time()
-        detections = detect(goal.rgb)
-        duration_detection = time.time() - st
-        feedback.feedback = "received detection."
-        self.server.publish_feedback(feedback)
-        print("   received detection.")
+        #feedback.feedback = "requesting detection..."
+        #self.server.publish_feedback(feedback)
+        #print("requesting detection...")
+        #st = time.time()
+        #detections = detect(goal.rgb)
+        #duration_detection = time.time() - st
+        #feedback.feedback = "received detection."
+        #self.server.publish_feedback(feedback)
+        #print("   received detection.")
 
-        if detections is None or len(detections) == 0:
+        if goal.mask_detections is None or len(goal.mask_detections) == 0:
             print("nothing detected")
             result.result_feedback = "nothing detected"
             result.success = False
             self.server.set_succeeded(result)
             return
+        
+        detections = []
+        for index, mask_detection in enumerate(goal.mask_detection):
+            detection = Detection()
+            detection.name = goal.class_names[index]
+            bbox = BoundingBox()
+            bbox.xmin = goal.bb_detections[index].x_offset
+            bbox.xmax = goal.bb_detections[index].x_offset + goal.bb_detections[index].width
+            bbox.ymin = goal.bb_detections[index].y_offset
+            bbox.ymax = goal.bb_detections[index].y_offset + goal.bb_detections[index].height
+            detection.bbox = bbox
+            detection.score = 0.7 # need to be fixed, no equal field
+            detection.mask = np.argwhere(np.flatten(np.asarray(mask_detection)) > 0)
+            detections.append(detection)
+
 
         # fill result with the detections
         mask_detected_objects = np.ones((height * width), dtype=np.uint8)

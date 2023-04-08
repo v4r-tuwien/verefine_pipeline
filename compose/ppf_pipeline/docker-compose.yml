@@ -1,27 +1,6 @@
 version: '2.4'
 services:
 
-  # run object detection
-
-  detect:
-    image: "maskrcnn"
-    network_mode: "host"
-    runtime: "nvidia"
-    build: 
-      context: ../../
-      dockerfile: src/maskrcnn/Dockerfile
-    extra_hosts:
-      - "hsrb:10.0.0.143"
-    environment:
-      ROS_MASTER_URI: "http://hsrb:11311"
-      ROS_IP: "10.0.0.206"
-    
-    command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; 
-                      rosparam load  /config/params.yaml /pose_estimator;
-                      ROS_NAMESPACE=pose_estimator python3 /maskrcnn/src/maskrcnn/ros_detection.py"
-    stdin_open: true
-    tty: true
-
   # run ppf for estimation and verefine for refinement
 
   estimate_refine:
