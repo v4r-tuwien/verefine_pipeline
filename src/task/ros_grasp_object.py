@@ -103,17 +103,39 @@ class GraspPoseEstimator:
             return
         
         detections = []
-        for index, mask_detection in enumerate(goal.mask_detection):
+        for index, class_name in enumerate(goal.class_names):
             detection = Detection()
-            detection.name = goal.class_names[index]
+            detection.name = class_name
+
             bbox = BoundingBox()
-            bbox.xmin = goal.bb_detections[index].x_offset
-            bbox.xmax = goal.bb_detections[index].x_offset + goal.bb_detections[index].width
-            bbox.ymin = goal.bb_detections[index].y_offset
-            bbox.ymax = goal.bb_detections[index].y_offset + goal.bb_detections[index].height
-            detection.bbox = bbox
-            detection.score = 0.7 # need to be fixed, no equal field
-            detection.mask = np.argwhere(np.flatten(np.asarray(mask_detection)) > 0)
+            if len(goal.mask_detections) > index:
+                detection.mask = np.argwhere(np.flatten(np.asarray(goal.mask_detections[index])) > 0)
+                img = np.asarray(goal.mask_detections[index])
+                rows = np.any(img, axis=1)
+                cols = np.any(img, axis=0)
+                rmin, rmax = np.where(rows)[0][[0, -1]]
+                cmin, cmax = np.where(cols)[0][[0, -1]]
+                bbox.xmin = cmin
+                bbox.xmax = cmax - cmin
+                bbox.ymin = rmin
+                bbox.ymax = rmax - rmin
+            elif len(goal.bb_detections) > index:
+                bbox.xmin = goal.bb_detections[index].x_offset
+                bbox.xmax = goal.bb_detections[index].x_offset + goal.bb_detections[index].width
+                bbox.ymin = goal.bb_detections[index].y_offset
+                bbox.ymax = goal.bb_detections[index].y_offset + goal.bb_detections[index].height
+                for col_index in range(bbox.xmin, bbox.xmax+1):
+                    for row_index in range(bbox.ymin, bbox.ymax+1):
+                        detection.mask.append(row_index + (col_index * width))
+                detection.mask = sorted(detection.mask)
+            else:
+                print("mask or boundingbox error")
+                result.result_feedback = "mask or boundingbox error"
+                result.success = False
+                self.server.set_succeeded(result)
+                return
+
+            detection.bbox = bbox            
             detections.append(detection)
 
 
@@ -127,7 +149,6 @@ class GraspPoseEstimator:
             result.bounding_boxes.append(RegionOfInterest(detection.bbox.xmin, detection.bbox.ymin, detection.bbox.ymax
                                                           - detection.bbox.ymin, detection.bbox.xmax
                                                           - detection.bbox.xmin, False))
-            result.class_confidences.append(detection.score)
             result.descriptions.append(detection.name)
             # object segmentation mask
             mask_ids = detection.mask
@@ -179,10 +200,6 @@ class GraspPoseEstimator:
         feedback.feedback = "requesting pose estimate and refine step..."
         self.server.publish_feedback(feedback)
         for detection in detections:
-            # reject based on detection score by a min. threshold
-            if detection.score < th_detection:
-                print("detection of %s rejected" % detection.name)
-                continue
 
             # estimate a set of candidate posesposs
             print("requesting pose estimate and refine step...")
@@ -226,8 +243,9 @@ class GraspPoseEstimator:
         self.server.publish_feedback(feedback)
 
         # -- Pose result --
-        for pose_with_confidence in poses:
+        for index, pose_with_confidence in enumerate(poses):
             result.pose_results.append(pose_with_confidence.pose)
+            result.class_confidence.append(confidences[index])
         result.result_feedback = result.result_feedback + ", pose_results"
 
         # Notify client that action is finished and result is ready
