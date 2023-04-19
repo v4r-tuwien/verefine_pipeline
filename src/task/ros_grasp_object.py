@@ -95,7 +95,7 @@ class GraspPoseEstimator:
         #self.server.publish_feedback(feedback)
         #print("   received detection.")
 
-        if goal.mask_detections is None or len(goal.mask_detections) == 0:
+        if (goal.mask_detections is None or len(goal.mask_detections) == 0) and (goal.bb_detections is None or len(goal.bb_detections) == 0):
             print("nothing detected")
             result.result_feedback = "nothing detected"
             result.success = False
