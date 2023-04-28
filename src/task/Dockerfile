@@ -92,7 +92,8 @@ RUN add-apt-repository -y ppa:ubuntu-toolchain-r/test
 RUN apt-get update
 RUN apt-get install -y --no-install-recommends gcc-4.9
 RUN apt-get install -y --no-install-recommends --only-upgrade libstdc++6
-RUN pip install scikit-image==0.14.5 open3d==0.9.0.0
+RUN pip install scikit-image==0.14.5 Send2Trash==1.8.0
+RUN pip install open3d==0.9.0.0
 
 ENV __NV_PRIME_RENDER_OFFLOAD=1 
 ENV __GLX_VENDOR_LIBRARY_NAME=nvidia
