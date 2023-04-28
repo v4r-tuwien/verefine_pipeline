@@ -14,7 +14,7 @@ services:
       - "hsrb:10.0.0.143"
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
-      ROS_IP: "10.0.0.206"
+      ROS_IP: "10.0.0.182"
     
     command: bash -c "source /maskrcnn/catkin_ws/devel/setup.bash; 
                       rosparam load  /config/params.yaml /pose_estimator;
@@ -37,7 +37,7 @@ services:
       - "hsrb:10.0.0.143"
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"   
-      ROS_IP: "10.0.0.206"
+      ROS_IP: "10.0.0.182"
 
     entrypoint: ""
     command: bash -c "source /verefine/catkin_ws/devel/setup.bash;
@@ -57,7 +57,7 @@ services:
       - "hsrb:10.0.0.143"
     environment:
       ROS_MASTER_URI: "http://hsrb:11311"
-      ROS_IP: "10.0.0.206"
+      ROS_IP: "10.0.0.182"
       DISPLAY: ${DISPLAY}
       Xvfb: 99 -screen 0 1920x1080x24
       QT_X11_NO_MITSHM: 1 
