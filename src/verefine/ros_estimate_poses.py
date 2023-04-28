@@ -41,7 +41,7 @@ from util.dataset import YcbvDataset
 from densefusion.densefusion import DenseFusion  # includes estimator and refiner
 
 
-CAMERA_INFO = rospy.get_param('/pose_estimator/CAMERA_INFO')
+CAMERA_INFO = rospy.get_param('/pose_estimator/camera_info_topic')
 ESTIMATE_MODE = 3
 
 if __name__ == "__main__":
