@@ -28,3 +28,6 @@ down_scale: 1  # down_scale speeds things up by already subsampling the image [p
 # Plane detection
 distance_threshold: 0.01
 to_meters: 0.001
+
+# Verefine mode
+verefine_mode: 3

@@ -42,7 +42,6 @@ from densefusion.densefusion import DenseFusion  # includes estimator and refine
 
 
 CAMERA_INFO = rospy.get_param('/pose_estimator/CAMERA_INFO')
-ESTIMATE_MODE = 3
 
 if __name__ == "__main__":
 
@@ -124,7 +123,7 @@ if __name__ == "__main__":
         # refine/verify poses using VeREFINE
         # IN list of lists: num_objects x num_hypotheses_per -- OUT list: num_objects x 1 (best)
         mode = config.MODE
-        mode = ESTIMATE_MODE
+        mode = rospy.get_param('/pose_estimator/verefine_mode')
         vf.mode = np.clip(mode, 0, 5)
         refined_hypotheses = vf.refine(observation, hypotheses)
 

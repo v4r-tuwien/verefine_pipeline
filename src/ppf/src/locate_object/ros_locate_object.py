@@ -226,30 +226,41 @@ class LocateObject:
             normal[n == 0] = 0.0
             normal[depth == 0] = 0.0
 
+            use_plane = True
+
             # == preprocessing
             # -- get plane pose, inliers and scene points
-            plane_pose, plane_pcd, scene_pcd, cloud_pcd, plane_indices = self.detector.detect(rgb, depth, self.max_dist)
-            plane_pcd = plane_pcd.transform(plane_pose)
-            scene_pcd = scene_pcd.transform(plane_pose)
+            try:
+                plane_pose, plane_pcd, scene_pcd, cloud_pcd, plane_indices = self.detector.detect(rgb, depth, self.max_dist)
+            except ValueError:
+                use_plane = False
 
-            # -- plane pop-out
-            # outlier removal
-            plane_pcd, _ = plane_pcd.remove_statistical_outlier(nb_neighbors=100, std_ratio=1.5)
-            scene_pcd, _ = scene_pcd.remove_statistical_outlier(nb_neighbors=50, std_ratio=2.0)
-            # plane pop-out: select points within the bounds and above the xy-plane
-            plane_bbox = np.asarray(plane_pcd.get_axis_aligned_bounding_box().get_box_points())
-            plane_bbox[3:7, 2] = scene_pcd.get_max_bound()[2]
-            plane_bbox = o3d.geometry.AxisAlignedBoundingBox.create_from_points(o3d.utility.Vector3dVector(plane_bbox))
-            object_pcd = scene_pcd.crop(plane_bbox)
+            if use_plane:
+                plane_pcd = plane_pcd.transform(plane_pose)
+                scene_pcd = scene_pcd.transform(plane_pose)
 
-            # == compute object pose using PPF
-            # -- prepare input: transform back to camera coordinates and create array in required format
-            object_pcd = object_pcd.transform(np.linalg.inv(plane_pose))
+                # -- plane pop-out
+                # outlier removal
+                plane_pcd, _ = plane_pcd.remove_statistical_outlier(nb_neighbors=100, std_ratio=1.5)
+                scene_pcd, _ = scene_pcd.remove_statistical_outlier(nb_neighbors=50, std_ratio=2.0)
+                # plane pop-out: select points within the bounds and above the xy-plane
+                plane_bbox = np.asarray(plane_pcd.get_axis_aligned_bounding_box().get_box_points())
+                plane_bbox[3:7, 2] = scene_pcd.get_max_bound()[2]
+                plane_bbox = o3d.geometry.AxisAlignedBoundingBox.create_from_points(o3d.utility.Vector3dVector(plane_bbox))
+                object_pcd = scene_pcd.crop(plane_bbox)
+
+                # == compute object pose using PPF
+                # -- prepare input: transform back to camera coordinates and create array in required format
+                object_pcd = object_pcd.transform(np.linalg.inv(plane_pose))
+            else:
+                object_pcd = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb, depth)
+                rospy.set_param('/pose_estimator/verefine_mode', 0)
+
+
             object_pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.005, max_nn=30))
             object_pcd.orient_normals_to_align_with_direction([0, 0, -1])
             scene_points = np.hstack([np.asarray(object_pcd.points), np.asarray(object_pcd.colors),
                                       np.asarray(object_pcd.normals)]).astype(np.float64)
-
 
             # -- detect and initial estimate poses
             # note: generates at most PPFRecognitionPipelineParameter.correspondences_per_scene_point_ per object (defaults to 3)
@@ -272,11 +283,16 @@ class LocateObject:
                     masks_before.append(object_masks_before)
 
                 # -- to verefine format
+                if use_plane:
+                    extrinsics = plane_pose
+                else:
+                    extrinsics = None
+
                 observation = {
                     'depth': depth,
                     'normal': normal,
                     'dependencies': None,
-                    'extrinsics': plane_pose,
+                    'extrinsics': extrinsics,
                     'intrinsics': self.im_K
                 }
                 hs = []

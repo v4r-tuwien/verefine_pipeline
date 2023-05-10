@@ -11,6 +11,7 @@ import sys
 sys.path.append("/canister/src/")
 sys.path.append("/canister/src/verefine")
 from verefine import config
+import rospy
 
 
 class Verefine:
@@ -27,6 +28,8 @@ class Verefine:
     def refine(self, observation, hypotheses):
         self.observation = observation
         mode = self.mode
+        # override mode with rosparam
+        mode = rospy.get_param('/pose_estimator/verefine_mode')
         simulator = self.simulator
         renderer = self.renderer
 
