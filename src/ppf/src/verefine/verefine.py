@@ -34,7 +34,7 @@ class Verefine:
         renderer = self.renderer
 
         # optional: initialize frame in simulator and renderer
-        if simulator is not None:
+        if simulator is not None and observation['extrinsics'] is not None:
             simulator.initialize_frame(observation['extrinsics'])
         if renderer is not None:
             renderer.set_observation(observation['depth'], observation['normal'])
