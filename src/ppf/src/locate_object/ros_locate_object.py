@@ -252,6 +252,7 @@ class LocateObject:
                 # == compute object pose using PPF
                 # -- prepare input: transform back to camera coordinates and create array in required format
                 object_pcd = object_pcd.transform(np.linalg.inv(plane_pose))
+                rospy.set_param('/pose_estimator/verefine_mode', 3)
             else:
                 object_pcd = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb, depth)
                 rospy.set_param('/pose_estimator/verefine_mode', 0)
