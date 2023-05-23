@@ -137,12 +137,12 @@ class LocateObject:
         # create plane detector and PPF
         roi_bbox = None
 
-        pd_to_meters = rospy.get_param('/pose_estimator/to_meters', 1e-3)
+        self.pd_to_meters = rospy.get_param('/pose_estimator/to_meters', 1e-3)
         distance_threshold = rospy.get_param('/pose_estimator/distance_threshold', 0.01)
 
         self.detector = PlaneDetector(self.im_width, self.im_height, self.im_K,
                                       self.down_scale, roi_bbox=roi_bbox,
-                                      to_meters=pd_to_meters, distance_threshold=distance_threshold)
+                                      to_meters=self.pd_to_meters, distance_threshold=distance_threshold)
         
         self.ppf = PPF(cfg_dir, models_dir, self.object_models)
 
@@ -254,7 +254,26 @@ class LocateObject:
                 object_pcd = object_pcd.transform(np.linalg.inv(plane_pose))
                 rospy.set_param('/pose_estimator/verefine_mode', 3)
             else:
-                object_pcd = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb, depth)
+                cam_fx, cam_fy = self.im_K[0, 0]/self.down_scale, self.im_K[1, 1]/self.down_scale
+                cam_cx, cam_cy = self.im_K[0, 2]/self.down_scale, self.im_K[1, 2]/self.down_scale
+                
+                down_width, down_height = int(self.im_width / self.down_scale), int(self.im_height / self.down_scale)
+                
+                umap = np.array([[j for _ in range(down_width)] for j in range(down_height)])
+                vmap = np.array([[i for i in range(down_width)] for _ in range(down_height)])
+
+                C = cv2.resize(rgb, (down_width, down_height)).astype(np.float32)/255.
+                D = cv2.resize(depth, (down_width, down_height))
+
+                # === project to point cloud in XYZRGB format, Nx6
+                pt2 = D * self.pd_to_meters
+                pt0 = (vmap - cam_cx) * pt2 / cam_fx
+                pt1 = (umap - cam_cy) * pt2 / cam_fy
+                points = np.dstack((pt0, pt1, pt2, C)).astype(np.float32).reshape((down_width * down_height, 6))
+
+                # === use Open3D for point cloud
+                object_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points[:, :3]))
+                object_pcd.colors = o3d.utility.Vector3dVector(points[:, 3:6])
                 rospy.set_param('/pose_estimator/verefine_mode', 0)
 
 
