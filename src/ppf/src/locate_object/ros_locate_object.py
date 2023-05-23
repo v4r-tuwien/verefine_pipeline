@@ -272,8 +272,9 @@ class LocateObject:
                 points = np.dstack((pt0, pt1, pt2, C)).astype(np.float32).reshape((down_width * down_height, 6))
 
                 # === use Open3D for point cloud
-                object_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points[:, :3]))
-                object_pcd.colors = o3d.utility.Vector3dVector(points[:, 3:6])
+                pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points[:, :3]))
+                pcd.colors = o3d.utility.Vector3dVector(points[:, 3:6])
+                object_pcd = pcd.select_by_index(goal.det.mask)
                 rospy.set_param('/pose_estimator/verefine_mode', 0)
 
 
