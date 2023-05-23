@@ -262,8 +262,8 @@ class LocateObject:
                 umap = np.array([[j for _ in range(down_width)] for j in range(down_height)])
                 vmap = np.array([[i for i in range(down_width)] for _ in range(down_height)])
 
-                C = cv2.resize(rgb, (down_width, down_height)).astype(np.float32)/255.
-                D = cv2.resize(depth, (down_width, down_height))
+                C = cv.resize(rgb, (down_width, down_height)).astype(np.float32)/255.
+                D = cv.resize(depth, (down_width, down_height))
 
                 # === project to point cloud in XYZRGB format, Nx6
                 pt2 = D * self.pd_to_meters
