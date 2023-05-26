@@ -1,5 +1,6 @@
 #! /usr/bin/env python3
 import rospy
+import ros_numpy
 from robokudo_msgs.msg import GenericImgProcAnnotatorAction, GenericImgProcAnnotatorGoal
 import actionlib
 from sensor_msgs.msg import Image, RegionOfInterest
@@ -8,9 +9,9 @@ import copy
 import numpy as np
 
 def detect(rgb):
-    rospy.wait_for_service('detect_objects')
+    rospy.wait_for_service('/pose_estimator/detect_objects')
     try:
-        detect_objects = rospy.ServiceProxy('detect_objects', detectron2_service_server)
+        detect_objects = rospy.ServiceProxy('/pose_estimator/detect_objects', detectron2_service_server)
         response = detect_objects(rgb)
         return response.detections.detections
     except rospy.ServiceException as e:
@@ -40,21 +41,25 @@ def get_poses():
     class_names = []
     for det in detections:
         bb_detection = RegionOfInterest()
-        bb_detection.width = det.bbox.xmax - det.bbox.xmin
-        bb_detection.height = det.bbox.ymax - det.bbox.ymin
-        bb_detection.x_offset = det.bbox.xmin
-        bb_detection.y_offset = det.bbox.ymin
+        bb_detection.height = det.bbox.xmax - det.bbox.xmin
+        bb_detection.width = det.bbox.ymax - det.bbox.ymin
+        bb_detection.y_offset = det.bbox.xmin
+        bb_detection.x_offset = det.bbox.ymin
         bb_detections.append(bb_detection)
 
         mask_detection = copy.deepcopy(rgb)
-        data = np.flatten(np.zeros((rgb.width, rgb.height), dtype=np.uint8))
-        data[det.mask] = 255
-        mask_detection.data = data.reshape((rgb.width, rgb.height))
+        data = np.zeros(rgb.width * rgb.height, dtype=np.uint8)
+        
+        data[np.array(det.mask, dtype=np.int64)] = 255
+        data = data.reshape((rgb.width, rgb.height))
+        mask_detection = ros_numpy.msgify(Image, data, encoding="8UC1")
         mask_detections.append(mask_detection)
+    
 
         class_names.append(det.name)
 
 
+    print(f"Detected: {class_names}")
     print('Sending Goal')
     goal.rgb = rgb
     goal.depth = depth
@@ -68,4 +73,3 @@ def get_poses():
 if __name__ == "__main__":
     rospy.init_node("get_poses")
     get_poses()
-
