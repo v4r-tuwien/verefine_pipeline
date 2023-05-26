@@ -293,8 +293,7 @@ class LocateObject:
                 if use_plane:
                     extrinsics = plane_pose
                 else:
-                    extrinsics = None
-
+                    extrinsics = np.eye(4)
                 observation = {
                     'depth': depth,
                     'normal': normal,
