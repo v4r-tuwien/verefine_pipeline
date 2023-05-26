@@ -109,16 +109,16 @@ class GraspPoseEstimator:
 
             bbox = BoundingBox()
             if len(goal.mask_detections) > index:
-                detection.mask = np.argwhere(np.flatten(np.asarray(goal.mask_detections[index])) > 0)
-                img = np.asarray(goal.mask_detections[index])
+                img = ros_numpy.numpify(goal.mask_detections[index])
+                detection.mask = np.argwhere(img.flatten() > 0)
                 rows = np.any(img, axis=1)
                 cols = np.any(img, axis=0)
                 rmin, rmax = np.where(rows)[0][[0, -1]]
                 cmin, cmax = np.where(cols)[0][[0, -1]]
                 bbox.xmin = cmin
-                bbox.xmax = cmax - cmin
+                bbox.xmax = cmax
                 bbox.ymin = rmin
-                bbox.ymax = rmax - rmin
+                bbox.ymax = rmax
             elif len(goal.bb_detections) > index:
                 bbox.xmin = goal.bb_detections[index].x_offset
                 bbox.xmax = goal.bb_detections[index].x_offset + goal.bb_detections[index].width
@@ -245,7 +245,7 @@ class GraspPoseEstimator:
         # -- Pose result --
         for index, pose_with_confidence in enumerate(poses):
             result.pose_results.append(pose_with_confidence.pose)
-            result.class_confidence.append(confidences[index])
+            result.class_confidences.append(confidences[index])
         result.result_feedback = result.result_feedback + ", pose_results"
 
         # Notify client that action is finished and result is ready
@@ -262,3 +262,4 @@ if __name__ == "__main__":
     print("pose_estimation_actionserver test ready!")
 
     rospy.spin()
+    
