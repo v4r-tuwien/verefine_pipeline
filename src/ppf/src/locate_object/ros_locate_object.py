@@ -199,6 +199,8 @@ class LocateObject:
         self.depth = goal.depth
 
         if self.rgb is None or self.depth is None:
+            rospy.logerr("No rgb or depth image passed: rgb passed: " + str(self.rgb is not None) + 
+                         'depth passed: ' + str(self.depth is not None))
             return None
         else:
             # == get images and objects to search
@@ -236,47 +238,31 @@ class LocateObject:
                 use_plane = False
 
             if use_plane:
-                plane_pcd = plane_pcd.transform(plane_pose)
-                scene_pcd = scene_pcd.transform(plane_pose)
-
-                # -- plane pop-out
-                # outlier removal
-                plane_pcd, _ = plane_pcd.remove_statistical_outlier(nb_neighbors=100, std_ratio=1.5)
-                scene_pcd, _ = scene_pcd.remove_statistical_outlier(nb_neighbors=50, std_ratio=2.0)
-                # plane pop-out: select points within the bounds and above the xy-plane
-                plane_bbox = np.asarray(plane_pcd.get_axis_aligned_bounding_box().get_box_points())
-                plane_bbox[3:7, 2] = scene_pcd.get_max_bound()[2]
-                plane_bbox = o3d.geometry.AxisAlignedBoundingBox.create_from_points(o3d.utility.Vector3dVector(plane_bbox))
-                object_pcd = scene_pcd.crop(plane_bbox)
-
-                # == compute object pose using PPF
-                # -- prepare input: transform back to camera coordinates and create array in required format
-                object_pcd = object_pcd.transform(np.linalg.inv(plane_pose))
                 rospy.set_param('/pose_estimator/verefine_mode', 3)
             else:
-                cam_fx, cam_fy = self.im_K[0, 0]/self.down_scale, self.im_K[1, 1]/self.down_scale
-                cam_cx, cam_cy = self.im_K[0, 2]/self.down_scale, self.im_K[1, 2]/self.down_scale
-                
-                down_width, down_height = int(self.im_width / self.down_scale), int(self.im_height / self.down_scale)
-                
-                umap = np.array([[j for _ in range(down_width)] for j in range(down_height)])
-                vmap = np.array([[i for i in range(down_width)] for _ in range(down_height)])
-
-                C = cv.resize(rgb, (down_width, down_height)).astype(np.float32)/255.
-                D = cv.resize(depth, (down_width, down_height))
-
-                # === project to point cloud in XYZRGB format, Nx6
-                pt2 = D * self.pd_to_meters
-                pt0 = (vmap - cam_cx) * pt2 / cam_fx
-                pt1 = (umap - cam_cy) * pt2 / cam_fy
-                points = np.dstack((pt0, pt1, pt2, C)).astype(np.float32).reshape((down_width * down_height, 6))
-
-                # === use Open3D for point cloud
-                pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points[:, :3]))
-                pcd.colors = o3d.utility.Vector3dVector(points[:, 3:6])
-                object_pcd = pcd.select_by_index(goal.det.mask)
                 rospy.set_param('/pose_estimator/verefine_mode', 0)
 
+            cam_fx, cam_fy = self.im_K[0, 0]/self.down_scale, self.im_K[1, 1]/self.down_scale
+            cam_cx, cam_cy = self.im_K[0, 2]/self.down_scale, self.im_K[1, 2]/self.down_scale
+            
+            down_width, down_height = int(self.im_width / self.down_scale), int(self.im_height / self.down_scale)
+            
+            umap = np.array([[j for _ in range(down_width)] for j in range(down_height)])
+            vmap = np.array([[i for i in range(down_width)] for _ in range(down_height)])
+
+            C = cv.resize(rgb, (down_width, down_height)).astype(np.float32)/255.
+            D = cv.resize(depth, (down_width, down_height))
+
+            # === project to point cloud in XYZRGB format, Nx6
+            pt2 = D * self.pd_to_meters
+            pt0 = (vmap - cam_cx) * pt2 / cam_fx
+            pt1 = (umap - cam_cy) * pt2 / cam_fy
+            points = np.dstack((pt0, pt1, pt2, C)).astype(np.float32).reshape((down_width * down_height, 6))
+
+            # === use Open3D for point cloud
+            pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points[:, :3]))
+            pcd.colors = o3d.utility.Vector3dVector(points[:, 3:6])
+            object_pcd = pcd.select_by_index(goal.det.mask)
 
             object_pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.005, max_nn=30))
             object_pcd.orient_normals_to_align_with_direction([0, 0, -1])
