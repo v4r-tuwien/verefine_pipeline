@@ -5,7 +5,6 @@ from robokudo_msgs.msg import GenericImgProcAnnotatorAction, GenericImgProcAnnot
 import actionlib
 from sensor_msgs.msg import Image, RegionOfInterest
 from object_detector_msgs.srv import detectron2_service_server
-import copy
 import numpy as np
 
 def detect(rgb):
@@ -41,17 +40,16 @@ def get_poses():
     class_names = []
     for det in detections:
         bb_detection = RegionOfInterest()
-        bb_detection.height = det.bbox.xmax - det.bbox.xmin
-        bb_detection.width = det.bbox.ymax - det.bbox.ymin
-        bb_detection.y_offset = det.bbox.xmin
-        bb_detection.x_offset = det.bbox.ymin
+        bb_detection.width = det.bbox.xmax - det.bbox.xmin
+        bb_detection.height = det.bbox.ymax - det.bbox.ymin
+        bb_detection.x_offset = det.bbox.xmin
+        bb_detection.y_offset = det.bbox.ymin
         bb_detections.append(bb_detection)
 
-        mask_detection = copy.deepcopy(rgb)
         data = np.zeros(rgb.width * rgb.height, dtype=np.uint8)
         
         data[np.array(det.mask, dtype=np.int64)] = 255
-        data = data.reshape((rgb.width, rgb.height))
+        data = data.reshape((rgb.height, rgb.width), order='C')
         mask_detection = ros_numpy.msgify(Image, data, encoding="8UC1")
         mask_detections.append(mask_detection)
     
