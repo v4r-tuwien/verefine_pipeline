@@ -32,7 +32,7 @@ class PlaneDetector:
         planar = np.float32(depth.copy())
         planar[observation_mask > 0] = 0
         # remove depth measurements of background ~ too far behind detected objects (need to be supported by plane)
-        threshold = np.mean(depth[observation_mask > 0]) + np.std(depth[observation_mask > 0])
+        threshold = np.mean(depth[observation_mask > 0]) + 2*np.std(depth[observation_mask > 0])
         planar[planar > threshold] = 0
 
         # === project depth to point cloud

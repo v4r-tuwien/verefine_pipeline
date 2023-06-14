@@ -124,8 +124,8 @@ class GraspPoseEstimator:
                 bbox.xmax = goal.bb_detections[index].x_offset + goal.bb_detections[index].width
                 bbox.ymin = goal.bb_detections[index].y_offset
                 bbox.ymax = goal.bb_detections[index].y_offset + goal.bb_detections[index].height
-                for col_index in range(bbox.xmin, bbox.xmax+1):
-                    for row_index in range(bbox.ymin, bbox.ymax+1):
+                for col_index in range(bbox.xmin, bbox.xmax):
+                    for row_index in range(bbox.ymin, bbox.ymax):
                         detection.mask.append(row_index * width + col_index)
                 detection.mask = sorted(detection.mask)
             else:
