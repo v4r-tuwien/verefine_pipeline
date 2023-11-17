@@ -1,3 +1,6 @@
+**DEPRECATED AND WILL BE PHASED OUT IN FAVOR OF THE [GDR-NET PIPELINE](https://github.com/v4r-tuwien/gdrnet_pipeline/). DOCKER IMAGES CAN'T BE BUILD ANYMORE**
+
+
 # Verefine Pipeline
 Pipeline for detecting objects and estimating and refining their pose. 
 
